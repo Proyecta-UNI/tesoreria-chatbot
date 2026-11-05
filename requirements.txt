@@ -5,3 +5,4 @@ requests
 openai
 msal
 fpdf2
+openpyxl>=3.1.5,<4

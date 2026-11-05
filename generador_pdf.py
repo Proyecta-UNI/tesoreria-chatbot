@@ -1,4 +1,5 @@
 import os
+from html import escape
 from fpdf import FPDF
 
 def generar_comprobante_pdf(datos: dict, ruta_salida: str, ruta_imagen: str = None) -> str:
@@ -19,6 +20,12 @@ def generar_comprobante_pdf(datos: dict, ruta_salida: str, ruta_imagen: str = No
         if datos.get("solo_pdf") else ""
     )
     html_texto = html_texto.replace("{{aviso_prueba}}", aviso_prueba)
+    proyecto_gestion = (
+        f"<p><strong>Proyecto:</strong> {escape(str(datos['proyecto']))}<br>"
+        f"<strong>Gestión:</strong> {escape(str(datos['gestion']))}</p>"
+        if datos.get("proyecto") and datos.get("gestion") else ""
+    )
+    html_texto = html_texto.replace("{{proyecto_gestion}}", proyecto_gestion)
 
     # Campos requeridos a inyectar
     campos_requeridos = [

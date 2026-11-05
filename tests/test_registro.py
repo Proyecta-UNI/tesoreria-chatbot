@@ -3,7 +3,10 @@
 Las integraciones se sustituyen al importar; se ejecutan las funciones reales
 de servicios.py y main.py con respuestas controladas.
 """
+import asyncio
+import time
 import importlib.util
+from itertools import count
 import os
 from pathlib import Path
 import sys
@@ -11,9 +14,11 @@ import tempfile
 import types
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
+import eventos_telegram
 
 
 RAIZ = Path(__file__).resolve().parents[1]
+IDS_ACTUALIZACIONES = count(100000)
 
 
 class AplicacionPrueba:
@@ -92,6 +97,20 @@ class ValidacionRegistro(unittest.TestCase):
 
 
 class ConsultaSaldo(unittest.TestCase):
+    def test_correlativo_reconoce_fechas_numericas_y_texto_del_mismo_dia(self):
+        from datetime import datetime
+        serial = (datetime(2026, 10, 16) - datetime(1899, 12, 30)).days
+        for usa, texto in ((False, "16/10/2026"), (True, "10/16/2026")):
+            filas = [{"values": [[None, serial, 2]]}, {"values": [[None, texto, 3]]},
+                     {"values": [[None, serial + 1, 40]]}]
+            with self.subTest(usa=usa), patch.object(servicios, "obtener_token_ms", return_value="token"), patch.object(servicios.requests, "get", return_value=Mock(status_code=200, json=lambda: {"value": filas})):
+                self.assertEqual(servicios.calcular_codigo_y_nro(texto, usa), ("O16102604", 4))
+
+    def test_fecha_excel_invalida_no_es_otra_fecha_valida(self):
+        for valor in (None, True, "", "no disponible", "32/10/2026", float("nan"), float("inf"), -1, 10**20):
+            with self.subTest(valor=valor):
+                self.assertIsNone(servicios._fecha_excel(valor))
+
     def consultar(self, filas):
         with patch.object(servicios, "obtener_token_ms", return_value="token"), patch.object(servicios.requests, "get", return_value=Mock(status_code=200, json=lambda: {"value": filas})):
             return servicios.obtener_saldo_actual()
@@ -127,14 +146,14 @@ class FlujoRegistro(unittest.TestCase):
         self.enterContext(patch.object(main, "usuario_autorizado", return_value=True))
         self.saldo = self.enterContext(patch.object(main, "obtener_saldo_actual", return_value=100))
         self.guardar = self.enterContext(patch.object(main, "guardar_en_excel", return_value={**datos_validos(), "codigo": "O16102601"}))
-        self.enterContext(patch.object(main.traceback, "print_exc"))
+        self.enterContext(patch.object(main, "registrar_excepcion"))
         self.anterior = os.getcwd()
         temporal = self.enterContext(tempfile.TemporaryDirectory(dir=RAIZ))
         os.chdir(temporal)
         self.addCleanup(os.chdir, self.anterior)
         main.user_states["1"] = dict(step="confirmar", datos_procesados=datos_validos(), saldo_previo=100, file_id="foto")
 
-    def enviar(self, texto=None, foto=False, usuario_id=1, chat_id=1):
+    def enviar(self, texto=None, foto=False, usuario_id=1, chat_id=1, update_id=None):
         mensaje = {"chat": {"id": chat_id}, "text": texto or ""}
         if usuario_id is not None:
             mensaje["from"] = {"id": usuario_id}
@@ -143,18 +162,11 @@ class FlujoRegistro(unittest.TestCase):
         request = types.SimpleNamespace()
         request.headers = {"X-Telegram-Bot-Api-Secret-Token": main.TELEGRAM_WEBHOOK_SECRET}
         async def json():
-            return {"message": mensaje}
+            return {"update_id": next(IDS_ACTUALIZACIONES) if update_id is None else update_id, "message": mensaje}
         request.json = json
-        # Este webhook y request.json no suspenden en las pruebas: no hace falta
-        # abrir sockets ni iniciar un bucle de eventos para ejecutar la corrutina.
-        corrutina = main.telegram_webhook(request)
-        try:
-            corrutina.send(None)
-        except StopIteration:
-            return
-        finally:
-            corrutina.close()
-        self.fail("El webhook suspendió inesperadamente durante una prueba sin I/O")
+        # El webhook procesa en un hilo (asyncio.to_thread), así que necesita un bucle de eventos.
+        # Sin sockets: request.json y las integraciones están sustituidos.
+        asyncio.run(main.telegram_webhook(request))
 
     def test_validacion_conserva_sesion_y_no_consulta_excel(self):
         main.user_states["1"]["datos_procesados"]["monto"] = None
@@ -202,12 +214,36 @@ class FlujoRegistro(unittest.TestCase):
         self.assertEqual(datos["saldo"], "No calculado (prueba)")
         self.assertEqual(main.user_states["1"]["datos_procesados"], originales)
 
+    def test_modo_pdf_desde_inicio_no_habilita_guardado_en_destino_tradicional(self):
+        main.user_states.clear()
+        self.enviar("/solo_pdf")
+        self.enviar(foto=True)
+        self.saldo.assert_not_called()
+        main.user_states["1"].update(step="confirmar", datos_procesados=datos_validos())
+        self.enviar("1")
+        self.guardar.assert_not_called()
+        self.assertIn("solo para PDF", self.mensajes.call_args.args[1])
+
     def test_fallo_solo_pdf_conserva_datos_para_reintentar(self):
         with patch.object(main, "enviar_comprobante_pdf", side_effect=RuntimeError()):
             self.enviar("5")
         self.guardar.assert_not_called()
         self.assertEqual(main.user_states["1"]["step"], "confirmar")
-        self.assertIn("No se guardó nada en Excel", self.mensajes.call_args.args[1])
+
+    def test_sesion_expira_tras_inactividad(self):
+        main.user_states["1"]["ultima_actividad"] = time.time() - (main.TIMEOUT_SESION_SEGUNDOS + 10)
+        self.enviar("1")
+        self.assertNotIn("1", main.user_states)
+        self.guardar.assert_not_called()
+        self.assertIn("rumiar", self.mensajes.call_args.args[1])
+
+    def test_sesion_expirada_permite_enviar_nueva_foto_directamente(self):
+        main.user_states["1"]["ultima_actividad"] = time.time() - (main.TIMEOUT_SESION_SEGUNDOS + 10)
+        self.enviar(foto=True)
+        self.assertIn("1", main.user_states)
+        self.assertEqual(main.user_states["1"]["file_id"], "foto")
+
+        self.assertIn("Recibido", self.mensajes.call_args.args[1])
 
     def test_solo_pdf_valida_datos(self):
         main.user_states["1"]["datos_procesados"]["ing_eg"] = "No determinado"
@@ -475,6 +511,12 @@ class PlantillaPDF(unittest.TestCase):
                 html = fpdf.return_value.write_html.call_args.args[0]
                 self.assertEqual("PRUEBA - SIN REGISTRO EN EXCEL" in html, prueba)
                 self.assertNotIn("{{aviso_prueba}}", html)
+                self.assertNotIn("{{proyecto_gestion}}", html)
+                self.assertNotIn("<strong>Proyecto:</strong>", html)
+        generador.generar_comprobante_pdf({**datos_validos(), "proyecto": "Proyecto <X>", "gestion": "2026"}, "ignorado.pdf")
+        html = fpdf.return_value.write_html.call_args.args[0]
+        self.assertIn("Proyecto &lt;X&gt;", html)
+        self.assertIn("<strong>Gestión:</strong> 2026", html)
 
 
 if __name__ == "__main__":

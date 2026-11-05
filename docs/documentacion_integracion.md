@@ -2,12 +2,34 @@
 
 Este documento detalla la arquitectura técnica actual del sistema de tesorería y registra los cambios implementados para la migración de un flujo manual/local a un entorno completamente integrado en la nube (Telegram + SharePoint + Power BI).
 
+## Estado de esta rama: DeepSeek y proyectos
+
+Este trabajo forma parte de la [fase 2](fase_2.md) indicada por el responsable del
+proyecto. WhatsApp se registra como un segundo canal en evaluación, sin implementación
+ni cambio de alcance confirmado para el código actual de Telegram.
+
+La selección `IA_PROVEEDOR=deepseek` usa DeepSeek en los dos pasos sin razonamiento y sin reintentos automáticos del SDK; de lo contrario se conserva Groq. El catálogo opcional `MS_CONFIG_ITEM_ID` reúne usuarios, proyectos con `gestion_actual` definida manualmente, destinos por gestión y permisos por persona/proyecto. Se descarga como archivo con Graph y se lee con openpyxl. Cada proyecto tiene un archivo; cada gestión, una hoja y tabla. Antes de escribir se revalida el catálogo y se comprueban hoja y 13 encabezados; no hay redirección al destino global ante errores.
+
+Consulta [el procedimiento completo de proyectos](proyectos_y_gestiones.md) y [DeepSeek](deepseek.md). El diagnóstico `python herramientas/verificar_configuracion.py` solo lee. La limitación de autenticación de workbook descrita en la guía de Graph sigue pendiente de validar/resolver en la integración real. Las notas de cambios siguientes incluyen decisiones históricas; sus referencias a no agregar dependencias/modelos describen esos cambios puntuales, no toda esta rama.
+
+El correlativo diario reconoce tanto fechas escritas como texto como fechas numéricas
+de Excel en el sistema 1900. Normaliza ambas antes de comparar el día, evitando
+reiniciar el correlativo cuando Graph devuelve un número en lugar de DD/MM/YYYY.
+Esto no selecciona la gestión: se sigue usando `gestion_actual` del catálogo.
+
+El webhook reserva cada `update_id` antes de ejecutar el flujo y omite los reenvíos
+con respuesta 200, incluso si el primer intento falló parcialmente. El registro
+local conserva hasta 10 000 IDs durante 24 horas; al llenarse devuelve 503 para
+eventos nuevos sin expulsar IDs vigentes. Se mantiene el despliegue de un worker
+y memoria temporal, sin servicios adicionales. Consulta [deduplicación de Telegram](deduplicacion_telegram.md)
+para el alcance ante fallos, reinicios y mensajes nuevos con el mismo contenido.
+
 ## 1. Arquitectura del Sistema
 El sistema se compone de cuatro nodos principales que interactúan de forma secuencial:
 
 1. **Interfaz de Usuario (Telegram):** Punto de entrada. Los usuarios envían comprobantes fotográficos e instrucciones textuales al bot (Toribio).
-2. **Motor de Procesamiento (FastAPI + Groq LLM):** El servidor en Render recibe los webhooks de Telegram. Si hay una imagen, se ejecuta un pipeline de dos pasos: (1) un modelo multimodal transcribe el texto del comprobante, y (2) un modelo de texto clasifica y estructura los datos en un esquema JSON. Los modelos son intercambiables desde la configuración centralizada en `servicios.py`.
-3. **Excel en SharePoint:** Un archivo contable (`MS_ITEM_ID`, tabla configurada mediante `MS_TABLE_NAME`, habitualmente `REGISTRODIARIO3`) guarda los movimientos. Otro archivo (`MS_USUARIOS_ITEM_ID`, tabla `USUARIOS_AUTORIZADOS`) contiene los permisos de uso del bot. Ambos están en el mismo sitio y biblioteca; el backend usa Microsoft Graph.
+2. **Motor de Procesamiento (FastAPI + Groq o DeepSeek):** El servidor en Render recibe los webhooks de Telegram. Si hay una imagen, se ejecuta un pipeline de dos pasos: (1) un modelo multimodal transcribe el texto del comprobante, y (2) un modelo de texto clasifica y estructura los datos en un esquema JSON. Los modelos se configuran mediante las variables del proveedor en Render o .env.
+3. **Excel en SharePoint:** Un archivo contable (`MS_ITEM_ID`, tabla configurada mediante `MS_TABLE_NAME`, habitualmente `REGISTRODIARIO3`) guarda los movimientos. Otro archivo (`MS_USUARIOS_ITEM_ID`, tabla `USUARIOS_AUTORIZADOS`) contiene los permisos de uso del bot. Ese es el modo tradicional. En modo de proyectos, MS_CONFIG_ITEM_ID identifica el catálogo central y sus filas definen los archivos/hojas/tablas de destino; el backend usa Microsoft Graph.
 4. **Visualización (Power BI):** La configuración de infraestructura descrita utiliza el archivo contable de SharePoint como origen del modelo semántico. El código del bot no administra ni verifica la actualización de Power BI.
 
 ---
@@ -40,7 +62,7 @@ Si la consulta inicial de saldo falla o Excel está vacío, `/solo_pdf` permite 
 
 ### Verificación local
 
-Ejecutar `python -m unittest discover -s tests -v` desde la raíz. Las pruebas usan la biblioteca estándar y sustituyen las integraciones externas, sin consumir cuota de Groq, enviar mensajes ni escribir en SharePoint. Cubren validación, conservación de sesiones ante errores, reintento de consulta de saldo, guardado de ingresos/egresos, incertidumbre de escritura, fallos del PDF, exportación sin acceso a Excel y aviso de prueba en la plantilla. No reemplazan una prueba de integración con las credenciales y servicios reales ni una revisión visual del PDF renderizado.
+Ejecutar `python -m unittest discover -s tests -v` desde la raíz. Las pruebas usan unittest y openpyxl para el lector del catálogo; sustituyen las integraciones externas, sin consumir cuota de Groq, enviar mensajes ni escribir en SharePoint. Cubren validación, conservación de sesiones ante errores, reintento de consulta de saldo, guardado de ingresos/egresos, incertidumbre de escritura, fallos del PDF, exportación sin acceso a Excel y aviso de prueba en la plantilla. No reemplazan una prueba de integración con las credenciales y servicios reales ni una revisión visual del PDF renderizado.
 
 ### Acceso mediante lista de usuarios en Excel
 
@@ -48,7 +70,7 @@ La tabla `USUARIOS_AUTORIZADOS` se ubica en un Excel separado, con columnas `tel
 
 La lista se cachea dos minutos en memoria. Al vencer, un fallo descarta el acceso anterior y establece 30 segundos antes de reintentar, manteniendo `/mi_id` disponible. Una fila inactiva prevalece ante duplicados. El mensaje de acceso informa al usuario que, si acaba de ser habilitado, el cambio puede tardar hasta dos minutos en reflejarse y que debe volver a escribir al finalizar ese plazo. Este aviso no modifica la duración de la caché ni promete acceso si falla la lectura. Las pruebas cubren lectura por encabezados, bajas y expiración, fallos de consulta, acceso público al ID y bloqueo del resto del flujo para desconocidos.
 
-Antes de habilitar esta versión, preparar la tabla siguiendo [la guía de control de acceso](control_acceso.md). La lectura real en SharePoint debe comprobarse en el despliegue con las credenciales existentes. La deduplicación mediante `update_id` sigue pendiente.
+Antes de habilitar esta versión, preparar la tabla siguiendo [la guía de control de acceso](control_acceso.md). La lectura real en SharePoint debe comprobarse en el despliegue con las credenciales existentes. La deduplicación mediante `update_id` está implementada en memoria con el alcance descrito al inicio de este documento.
 
 ### Validación del secreto del webhook
 
@@ -94,6 +116,15 @@ Ver [configuración y activación del webhook protegido](webhook_telegram.md). N
 *   **Migración de Origen de Datos:** Se reemplazó el origen de datos local en Power Query (`C:\Users\...`) por una conexión Web hacia la ruta absoluta del documento en SharePoint.
 *   **Eliminación de Gateway Local:** Al apuntar directamente a la nube de Microsoft, se eliminó la dependencia de un "Personal Gateway" instalado en una máquina física.
 *   **Actualización Programada:** Se configuraron credenciales OAuth2 (Nivel Organizacional) en Power BI Service. Se programó el modelo semántico para ejecutar actualizaciones autónomas y periódicas (ej. diaria a la 1:00 a.m.), obteniendo la data de SharePoint sin intervención manual.
+
+### 2.7 Requerimientos Funcionales y Modelo Operativo (Toribot y Proyectos)
+En alineación con los requerimientos de la directiva y el modelo financiero de la organización:
+*   **Conservación del campo `Tipo`:** Se mantiene la extracción y categorización del tipo de movimiento (compra, servicios, pasajes/movilidad, donaciones, transferencias) para preservar la granularidad contable y evitar clasificar forzosamente todos los egresos como compras.
+*   **Estandarización del campo `Estado` a "Pagado":** Los proyectos operan bajo un esquema de fondos asignados por adelantado (caja chica / presupuesto aprobado). Los comprobantes enviados representan operaciones ya canceladas. Por tanto, el campo `estado` se fija de forma estática en `"Pagado"`, eliminando inferencias probabilísticas erróneas por parte del LLM.
+*   **Delimitación del Alcance del Asistente:** El bot opera estrictamente como transcriptor y estructurador de datos tabulares a partir de comprobantes. La administración, control de techos presupuestales y conciliación del saldo inicial corresponden a la gestión humana y a la directiva central.
+*   **Descentralización de Libros Contables:** Cada iniciativa o proyecto dispone de un libro Excel independiente en SharePoint (definido en el catálogo), permitiendo auditar micro-compras operativas sin saturar un libro general ni generar bloqueos de concurrencia entre directores.
+*   **Saldo Base y Fórmulas Iterativas:** El saldo inicial se ingresa o enlaza manualmente en la cabecera del archivo contable (`B3`), mientras que la columna `SALDO` de la tabla se delega a fórmulas acumulativas nativas de Excel (`Saldo Base + Ingresos - Egresos`), garantizando consistencia matemática.
+*   **Caducidad Automática de Sesiones (TTL 10 min):** Cada sesión en memoria mantiene una marca temporal de última actividad. Si transcurren más de 10 minutos de inactividad, la sesión se descarta automáticamente. Si el usuario reanuda enviando una foto, se inicia un nuevo flujo sin bloqueos; si reanuda con texto, el bot le notifica con su diálogo característico («me fui a rumiar...») que la sesión previa caducó por seguridad.
 
 ---
 

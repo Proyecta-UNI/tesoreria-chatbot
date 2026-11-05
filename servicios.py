@@ -6,18 +6,25 @@ import math
 import time
 import requests
 from openai import OpenAI
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 import msal
+from catalogo import Catalogo, ErrorCatalogo, leer_tablas_xlsx
+from seguridad import neutralizar_formula, ocultar_secretos
 
-# --- CONFIGURACIÓN DE GROQ ---
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    raise ValueError("🚨 ERROR: Falta GROQ_API_KEY en el archivo .env")
+# --- PROVEEDOR DE IA (optativo; conserva Groq en instalaciones existentes) ---
+IA_PROVEEDOR = (os.getenv("IA_PROVEEDOR") or "groq").strip().lower()
+if IA_PROVEEDOR not in ("groq", "deepseek"):
+    raise ValueError("IA_PROVEEDOR debe ser groq o deepseek.")
+variable_clave = "DEEPSEEK_API_KEY" if IA_PROVEEDOR == "deepseek" else "GROQ_API_KEY"
+clave_ia = (os.getenv(variable_clave) or "").strip()
+if not clave_ia:
+    raise ValueError(f"🚨 ERROR: Falta {variable_clave} en el archivo .env")
 
 llm_client = OpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1",
-    timeout=30.0
+    api_key=clave_ia,
+    base_url="https://api.deepseek.com" if IA_PROVEEDOR == "deepseek" else "https://api.groq.com/openai/v1",
+    timeout=30.0,
+    **({"max_retries": 0} if IA_PROVEEDOR == "deepseek" else {}),
 )
 
 # --- CONFIGURACIÓN DE MODELOS LLM ---
@@ -43,15 +50,45 @@ def _parametros_modelo_desde_entorno(nombre_variable, predeterminado):
 MODELO_VISION = {
     "model": (os.getenv("GROQ_MODELO_VISION") or "").strip() or "qwen/qwen3.6-27b",
     "max_completion_tokens": 2048,
-    "extra_params": _parametros_modelo_desde_entorno("GROQ_VISION_EXTRA_PARAMS", {"reasoning_effort": "none"}),
+    "extra_params": _parametros_modelo_desde_entorno("GROQ_VISION_EXTRA_PARAMS", {"reasoning_effort": "none"}) if IA_PROVEEDOR == "groq" else {},
 }
 
 MODELO_TEXTO = {
     "model": (os.getenv("GROQ_MODELO_TEXTO") or "").strip() or "llama-3.3-70b-versatile",
     "max_completion_tokens": 512,
     "temperature": 0,
-    "extra_params": _parametros_modelo_desde_entorno("GROQ_TEXTO_EXTRA_PARAMS", {}),
+    "extra_params": _parametros_modelo_desde_entorno("GROQ_TEXTO_EXTRA_PARAMS", {}) if IA_PROVEEDOR == "groq" else {},
 }
+
+if IA_PROVEEDOR == "deepseek":
+    # En Chat Completions DeepSeek usa max_tokens y thinking en extra_body.
+    # Se desactiva razonamiento en ambos pasos para esta extracción breve.
+    MODELO_VISION = {
+        "model": (os.getenv("DEEPSEEK_MODELO_VISION") or "").strip() or "deepseek-flash",
+        "max_completion_tokens": 2048,
+        "extra_params": {"extra_body": {"thinking": {"type": "disabled"}}},
+    }
+    MODELO_TEXTO = {
+        "model": (os.getenv("DEEPSEEK_MODELO_TEXTO") or "").strip() or "deepseek-flash",
+        "max_completion_tokens": 512,
+        "temperature": 0,
+        "extra_params": {"extra_body": {"thinking": {"type": "disabled"}}},
+    }
+
+
+def _opciones_llm(modelo):
+    limite = "max_tokens" if IA_PROVEEDOR == "deepseek" else "max_completion_tokens"
+    return {"model": modelo["model"], limite: modelo["max_completion_tokens"], **modelo["extra_params"]}
+
+
+def _contenido_llm(respuesta):
+    eleccion = respuesta.choices[0]
+    if eleccion.finish_reason == "length":
+        raise ValueError("Respuesta de IA truncada; no se utilizarán datos incompletos.")
+    contenido = eleccion.message.content
+    if not isinstance(contenido, str) or not contenido.strip():
+        raise ValueError("La IA no devolvió contenido utilizable.")
+    return contenido.strip()
 
 # --- CONFIGURACIÓN DE FORMATO DE FECHA ---
 # "PE" = DD/MM/YYYY (Perú, por defecto), "US" = MM/DD/YYYY (USA)
@@ -67,6 +104,8 @@ MS_DRIVE_ID = os.getenv("MS_DRIVE_ID")
 MS_ITEM_ID = os.getenv("MS_ITEM_ID")
 MS_USUARIOS_ITEM_ID = os.getenv("MS_USUARIOS_ITEM_ID")
 MS_TABLE_NAME = os.getenv("MS_TABLE_NAME", "TablaFinanzas")
+MS_CONFIG_ITEM_ID = (os.getenv("MS_CONFIG_ITEM_ID") or "").strip()
+_cache_catalogo = {"valor": None, "vence": 0.0}
 
 # Lista de acceso en un archivo distinto, dentro de la misma biblioteca.
 TABLA_USUARIOS = "USUARIOS_AUTORIZADOS"
@@ -94,7 +133,7 @@ def obtener_token_ms():
     if "access_token" in result:
         return result["access_token"]
     else:
-        print(f"Error obteniendo token: {result.get('error')}")
+        print(f"Error obteniendo token: {ocultar_secretos(result.get('error'))}")
         return None
 
 def _normalizar_telegram_id(valor):
@@ -147,6 +186,11 @@ def usuario_autorizado(usuario_id):
     usuario_id = _normalizar_telegram_id(usuario_id)
     if usuario_id is None:
         return False
+    if MS_CONFIG_ITEM_ID:
+        try:
+            return obtener_catalogo().usuarios.get(usuario_id, False)
+        except ErrorCatalogo:
+            return False
     if time.monotonic() >= _cache_usuarios["vence"]:
         try:
             ids = obtener_usuarios_autorizados()
@@ -158,6 +202,91 @@ def usuario_autorizado(usuario_id):
             duracion = 30
         _cache_usuarios.update(ids=ids, vence=time.monotonic() + duracion)
     return usuario_id in _cache_usuarios["ids"]
+
+
+def obtener_catalogo(forzar=False):
+    """Lee una única instantánea del Excel central, sin escribirlo."""
+    if not MS_CONFIG_ITEM_ID:
+        raise ErrorCatalogo("El modo de proyectos no está configurado.")
+    if not forzar and time.monotonic() < _cache_catalogo["vence"]:
+        if _cache_catalogo["valor"] is None:
+            raise ErrorCatalogo("El catálogo no está disponible; reintenta en 30 segundos.")
+        return _cache_catalogo["valor"]
+    try:
+        if MS_CONFIG_ITEM_ID == MS_ITEM_ID:
+            raise ErrorCatalogo("El Excel central debe ser distinto del contable.")
+        token = obtener_token_ms()
+        if not token:
+            raise ErrorCatalogo("No se pudo autenticar para leer el catálogo.")
+        from urllib.parse import quote
+        url = f"https://graph.microsoft.com/v1.0/drives/{quote(MS_DRIVE_ID or '', safe='')}/items/{quote(MS_CONFIG_ITEM_ID, safe='')}/content"
+        respuesta = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
+        respuesta.raise_for_status()
+        valor = Catalogo(leer_tablas_xlsx(respuesta.content), (MS_DRIVE_ID, MS_CONFIG_ITEM_ID))
+    except Exception as e:
+        _cache_catalogo.update(valor=None, vence=time.monotonic() + 30)
+        print(f"No se pudo leer el catálogo de proyectos ({type(e).__name__}).")
+        raise ErrorCatalogo("No se pudo leer la configuración. Consulta al área de TIC.") from e
+    _cache_catalogo.update(valor=valor, vence=time.monotonic() + 120)
+    return valor
+
+
+def obtener_destinos_usuario(usuario_id):
+    return obtener_catalogo().destinos_usuario(usuario_id)
+
+
+def validar_destino_actual(usuario_id, destino):
+    # No reutiliza permisos/gestiones vencidos ni redirige una operación ya iniciada.
+    return obtener_catalogo(forzar=True).validar_destino(usuario_id, destino)
+
+
+def _url_tabla(destino=None):
+    if destino is not None:
+        return destino.url_tabla()
+    if MS_CONFIG_ITEM_ID:
+        raise ErrorCatalogo("En modo de proyectos es obligatorio seleccionar un destino.")
+    return f"https://graph.microsoft.com/v1.0/sites/{MS_SITE_ID}/drives/{MS_DRIVE_ID}/items/{MS_ITEM_ID}/workbook/tables/{MS_TABLE_NAME}"
+
+
+def _leer_filas_excel(url, headers):
+    """Sigue la paginación de la misma tabla antes de calcular saldo/numeración."""
+    filas, vistas = [], set()
+    siguiente = url
+    while siguiente:
+        if siguiente in vistas or siguiente.split("?", 1)[0] != url:
+            raise ValueError("Paginación de Excel inválida.")
+        vistas.add(siguiente)
+        respuesta = requests.get(siguiente, headers=headers, timeout=15)
+        if respuesta.status_code != 200:
+            raise ValueError("Excel no respondió correctamente.")
+        datos = respuesta.json()
+        if not isinstance(datos.get("value"), list):
+            raise ValueError("Excel no devolvió filas válidas.")
+        filas.extend(datos["value"])
+        siguiente = datos.get("@odata.nextLink")
+    return filas
+
+
+def verificar_tabla_destino(destino):
+    """Verifica hoja y columnas antes de enviar las 13 posiciones al nuevo destino."""
+    import unicodedata
+    token = obtener_token_ms()
+    if not token:
+        raise ErrorCatalogo("No se pudo verificar la tabla de destino.")
+    headers = {"Authorization": f"Bearer {token}"}
+    respuesta = requests.get(destino.url_tabla() + "/worksheet", headers=headers, timeout=15)
+    respuesta.raise_for_status()
+    if respuesta.json().get("name") != destino.hoja:
+        raise ErrorCatalogo("La tabla no pertenece a la hoja configurada para esta gestión.")
+    respuesta = requests.get(destino.url_tabla() + "/headerRowRange", headers=headers, timeout=15)
+    respuesta.raise_for_status()
+    valores = respuesta.json().get("values", [])
+    esperados = ["codigo", "fecha", "nrooperacion", "concepto", "tipo", "ingeg",
+                 "motivo", "acreedor", "deudor", "estado", "ingreso", "egreso", "saldo"]
+    def normalizar(valor):
+        return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", str(valor).lower()).encode("ascii", "ignore").decode())
+    if len(valores) != 1 or [normalizar(v) for v in valores[0]] != esperados:
+        raise ErrorCatalogo("La tabla de destino no tiene las 13 columnas acordadas en el orden correcto.")
 
 
 class ErrorConsultaSaldo(Exception):
@@ -184,7 +313,7 @@ def validar_operacion(datos: dict) -> tuple:
     return monto, clasificacion.strip().lower()
 
 
-def obtener_saldo_actual():
+def obtener_saldo_actual(destino=None):
     """Consulta la última fila de la tabla en Excel para obtener el último saldo."""
     try:
         token = obtener_token_ms()
@@ -199,18 +328,10 @@ def obtener_saldo_actual():
     }
     
     # Obtener las filas de la tabla
-    url = f"https://graph.microsoft.com/v1.0/sites/{MS_SITE_ID}/drives/{MS_DRIVE_ID}/items/{MS_ITEM_ID}/workbook/tables/{MS_TABLE_NAME}/rows"
+    url = _url_tabla(destino) + "/rows"
     
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code != 200:
-            print(f"Error consultando Excel: {response.text}")
-            raise ErrorConsultaSaldo("Excel no respondió correctamente.")
-            
-        data = response.json()
-        filas = data["value"]
-        if not isinstance(filas, list):
-            raise ErrorConsultaSaldo("La respuesta de Excel no contiene filas válidas.")
+        filas = _leer_filas_excel(url, headers)
         
         if not filas:
             return None # Tabla vacía
@@ -233,7 +354,7 @@ def obtener_saldo_actual():
             raise ErrorConsultaSaldo("Hay registros en Excel, pero no un saldo válido.")
         return None # Solo filas vacías: todavía no hay un saldo inicial
     except Exception as e:
-        print(f"Excepción obteniendo saldo actual: {e}")
+        print(f"Excepción obteniendo saldo actual: {ocultar_secretos(e)}")
         raise ErrorConsultaSaldo("No se pudo consultar el saldo de Excel.") from e
 
 def _extraer_texto_de_imagen(image_bytes: bytes) -> str:
@@ -241,9 +362,7 @@ def _extraer_texto_de_imagen(image_bytes: bytes) -> str:
     imagen_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
     response = llm_client.chat.completions.create(
-        model=MODELO_VISION["model"],
-        max_completion_tokens=MODELO_VISION["max_completion_tokens"],
-        **MODELO_VISION["extra_params"],
+        **_opciones_llm(MODELO_VISION),
         messages=[
             {
                 "role": "user",
@@ -254,7 +373,7 @@ def _extraer_texto_de_imagen(image_bytes: bytes) -> str:
             }
         ]
     )
-    contenido = response.choices[0].message.content.strip()
+    contenido = _contenido_llm(response)
     
     # Limpieza defensiva por si el modelo aún incluye bloques <think>
     contenido = re.sub(r"<think>.*?</think>", "", contenido, flags=re.DOTALL).strip()
@@ -275,10 +394,12 @@ def _identificar_error_llm(excepcion: Exception) -> str:
             "Por favor, avísale al área de TIC para que me actualicen. "
             "Mientras tanto, no puedo procesar imágenes. ¡Perdón por las molestias!"
         )
+    elif "insufficient_balance" in error_str or "402" in error_str:
+        return "🐮 No pude leer el comprobante porque el servicio de IA no tiene saldo. Avísale al área de TIC para que lo revise."
     elif "rate_limit" in error_str or "429" in error_str:
         return (
             "🐌 ¡Uff! Me hicieron trabajar demasiado rápido y me pusieron en pausa. "
-            "Dame un minutito para recuperar el aliento y vuelve a intentarlo, ¿sí?"
+            "El tiempo de espera depende del límite alcanzado. Inténtalo más tarde; si continúa, avísale al área de TIC."
         )
     elif "authentication" in error_str or "401" in error_str or "invalid_api_key" in error_str:
         return (
@@ -306,7 +427,7 @@ def extraer_datos_recibo_llm(image_bytes: bytes, contexto_usuario: str) -> dict:
         texto_ocr = _extraer_texto_de_imagen(image_bytes)
         print(f"--- TEXTO OCR EXTRAÍDO ---\n{texto_ocr}\n--- FIN OCR ---")
     except Exception as e:
-        print(f"Error en OCR multimodal: {e}")
+        print(f"Error en OCR multimodal: {ocultar_secretos(e)}")
         msg = _identificar_error_llm(e)
         return {"error": True, "mensaje": msg} if msg else {"error": True}
 
@@ -346,34 +467,33 @@ Devuelve exclusivamente un JSON válido con esta estructura:
     "motivo": "Motivo encontrado o deducido en el comprobante o contexto. Si no existe: 'No disponible'",
     "acreedor": "Razón social completa si aparece en el comprobante. Si solo hay nombre comercial, usar ese. Si no existe: 'No aplica'",
     "deudor": "Persona que realizó la compra o entrega dinero (puede venir del contexto). Si no existe: 'No aplica'",
-    "estado": "Pagado, Pendiente, Rechazado u otro si aparece. Si no: 'No determinado'",
+    "estado": "Siempre 'Pagado'",
     "monto": 0.00
 }}"""
 
     try:
         response = llm_client.chat.completions.create(
-            model=MODELO_TEXTO["model"],
+            **_opciones_llm(MODELO_TEXTO),
             temperature=MODELO_TEXTO["temperature"],
-            max_completion_tokens=MODELO_TEXTO["max_completion_tokens"],
             response_format={"type": "json_object"},
-            **MODELO_TEXTO["extra_params"],
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": prompt}
             ]
         )
 
-        contenido = response.choices[0].message.content
+        contenido = _contenido_llm(response)
         datos = json.loads(contenido)
 
         campos_requeridos = {"fecha", "concepto", "tipo", "ing_eg", "motivo", "acreedor", "deudor", "estado", "monto"}
         if set(datos.keys()) != campos_requeridos:
             raise ValueError(f"Campos JSON incorrectos: {list(datos.keys())}")
 
+        datos["estado"] = "Pagado"
         return datos
 
     except Exception as e:
-        print(f"Error en LLM interpretación: {e}")
+        print(f"Error en LLM interpretación: {ocultar_secretos(e)}")
         try:
             print("Respuesta recibida:")
             print(response.choices[0].message.content)
@@ -383,7 +503,29 @@ Devuelve exclusivamente un JSON válido con esta estructura:
         return {"error": True, "mensaje": msg} if msg else {"error": True}
 
 
-def calcular_codigo_y_nro(fecha_str: str, formato_usa: bool = False) -> tuple:
+def _fecha_excel(valor, formato_usa=False):
+    """Normaliza fechas de Graph: texto o serial Excel del sistema de fechas 1900."""
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    if type(valor) in (int, float):
+        if not math.isfinite(valor) or valor < 1:
+            return None
+        try:
+            return (datetime(1899, 12, 30) + timedelta(days=valor)).date()
+        except (OverflowError, ValueError):
+            return None
+    if isinstance(valor, str):
+        for formato in ("%m/%d/%Y" if formato_usa else "%d/%m/%Y", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                return datetime.strptime(valor.strip(), formato).date()
+            except ValueError:
+                continue
+    return None
+
+
+def calcular_codigo_y_nro(fecha_str: str, formato_usa: bool = False, destino=None) -> tuple:
     """Calcula el autoincremental del día consultando las filas de Excel."""
     meses_letras = ["E", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"]
     try:
@@ -402,19 +544,19 @@ def calcular_codigo_y_nro(fecha_str: str, formato_usa: bool = False) -> tuple:
 
     token = obtener_token_ms()
     nro_operacion_dia = 1
+    fecha_objetivo = _fecha_excel(fecha_str, formato_usa)
     
     if token:
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-        url = f"https://graph.microsoft.com/v1.0/sites/{MS_SITE_ID}/drives/{MS_DRIVE_ID}/items/{MS_ITEM_ID}/workbook/tables/{MS_TABLE_NAME}/rows"
+        url = _url_tabla(destino) + "/rows"
         try:
-            response = requests.get(url, headers=headers, timeout=15)
-            if response.status_code == 200:
-                filas = response.json().get("value", [])
+            filas = _leer_filas_excel(url, headers)
+            if filas:
                 conteo_hoy = 0
                 for fila in filas:
                     valores = fila.get("values", [[]])[0]
                     # Indice 1 es fecha, indice 2 es nro_operacion
-                    if len(valores) > 2 and valores[1] == fecha_str:
+                    if fecha_objetivo is not None and len(valores) > 2 and _fecha_excel(valores[1], formato_usa) == fecha_objetivo:
                         try:
                             nro = int(valores[2])
                             if nro > conteo_hoy:
@@ -423,19 +565,40 @@ def calcular_codigo_y_nro(fecha_str: str, formato_usa: bool = False) -> tuple:
                             pass
                 nro_operacion_dia = conteo_hoy + 1
         except Exception as e:
-            print(f"Error calculando autoincremental: {e}")
+            if destino is not None:
+                raise ErrorConsultaSaldo("No se pudo calcular la numeración del destino.") from e
+            print(f"Error calculando autoincremental: {ocultar_secretos(e)}")
+    elif destino is not None:
+        raise ErrorConsultaSaldo("No se pudo autenticar para calcular la numeración.")
 
     nro_str = f"{nro_operacion_dia:02d}" 
     codigo = f"{letra_mes}{fecha_ddmmyy}{nro_str}"
     
     return codigo, nro_operacion_dia
 
-def guardar_en_excel(datos: dict, saldo_previo: float, formato_usa: bool = False) -> dict:
+def guardar_en_excel(datos: dict, saldo_previo: float, formato_usa: bool = False, destino=None) -> dict:
     """Guarda directamente en el Excel de SharePoint usando Graph API."""
     monto_float, clasificacion = validar_operacion(datos)
+    if MS_CONFIG_ITEM_ID and destino is None:
+        raise ErrorCatalogo("No hay un proyecto de destino seleccionado.")
     # El formato final se determina por: variable de entorno OR toggle del usuario
     usar_usa = formato_usa or FORMATO_FECHA_EXCEL == "US"
-    codigo, nro_operacion_dia = calcular_codigo_y_nro(datos["fecha"], usar_usa)
+    if destino is not None:
+        try:
+            verificar_tabla_destino(destino)
+        except Exception as e:
+            raise ErrorCatalogo("No se pudo verificar la hoja y la estructura de su tabla.") from e
+        datos = datos.copy()
+        try:
+            fecha = datetime.strptime(datos["fecha"], "%m/%d/%Y" if formato_usa else "%d/%m/%Y")
+        except (ValueError, TypeError, KeyError) as e:
+            raise ErrorValidacionOperacion("La fecha no es válida para el formato seleccionado.") from e
+        usar_usa = destino.formato_fecha == "US"
+        datos["fecha"] = fecha.strftime("%m/%d/%Y" if usar_usa else "%d/%m/%Y")
+        codigo, nro_operacion_dia = calcular_codigo_y_nro(datos["fecha"], usar_usa, destino=destino)
+        datos.update(proyecto=destino.nombre, gestion=destino.gestion)
+    else:
+        codigo, nro_operacion_dia = calcular_codigo_y_nro(datos["fecha"], usar_usa)
     
     ingreso_val = 0
     egreso_val = 0
@@ -457,13 +620,13 @@ def guardar_en_excel(datos: dict, saldo_previo: float, formato_usa: bool = False
         None,
         datos["fecha"],
         str(nro_operacion_dia),
-        datos["concepto"],
-        datos["tipo"],
+        neutralizar_formula(datos["concepto"]),
+        neutralizar_formula(datos["tipo"]),
         clasificacion.capitalize(),
-        datos["motivo"],
-        datos["acreedor"],
-        datos["deudor"],
-        datos["estado"],
+        neutralizar_formula(datos["motivo"]),
+        neutralizar_formula(datos["acreedor"]),
+        neutralizar_formula(datos["deudor"]),
+        neutralizar_formula(datos["estado"]),
         ingreso_val,
         egreso_val,
         None
@@ -482,7 +645,7 @@ def guardar_en_excel(datos: dict, saldo_previo: float, formato_usa: bool = False
         "values": [fila_nueva]
     }
     
-    url = f"https://graph.microsoft.com/v1.0/sites/{MS_SITE_ID}/drives/{MS_DRIVE_ID}/items/{MS_ITEM_ID}/workbook/tables/{MS_TABLE_NAME}/rows/add"
+    url = _url_tabla(destino) + "/rows/add"
     
     response = requests.post(url, headers=headers, json=payload, timeout=15)
     response.raise_for_status() 

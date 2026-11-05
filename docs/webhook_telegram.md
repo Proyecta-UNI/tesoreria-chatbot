@@ -64,6 +64,6 @@ La URL completa es `https://TU_SERVICIO.onrender.com/webhook`. En local, utiliza
 * **Se necesita cambiar el secreto:** actualiza tanto Render como el registro del webhook en Telegram. Las solicitudes con el secreto anterior serán rechazadas después del cambio en el servidor.
 * **Consulta HTTP directa al webhook:** enviar un ID autorizado dentro de un JSON no permite saltarse la validación del secreto.
 
-Las pruebas locales cubren secretos ausentes, incorrectos o no ASCII, el rechazo antes de leer JSON, la configuración de inicio y la aceptación del secreto correcto. Las integraciones están simuladas; se debe verificar el envío real desde Telegram al desplegar. El secreto no identifica eventos repetidos: la deduplicación por `update_id` continúa pendiente.
+Las pruebas locales cubren secretos ausentes, incorrectos o no ASCII, el rechazo antes de leer JSON, la configuración de inicio y la aceptación del secreto correcto. Las integraciones están simuladas; se debe verificar el envío real desde Telegram al desplegar. El secreto autentica el origen. Después, un registro en memoria de `update_id` evita procesar reenvíos del mismo evento; consulta [deduplicación de Telegram](deduplicacion_telegram.md) para conocer retención, fallos y límites tras reiniciar Render.
 
 Referencia: [Telegram Bot API: setWebhook](https://core.telegram.org/bots/api#setwebhook).

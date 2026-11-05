@@ -14,41 +14,58 @@ Este chatbot de tesorería de Telegram está diseñado para la gestión y automa
 
 El bot recibe fotografías de recibos, boletas o facturas, utiliza un Modelo de Lenguaje Visual (VLM) para comprender e inyectar la información en una base de datos centralizada en SharePoint a través de Microsoft Graph API, y ofrece la capacidad opcional de generar al instante un comprobante de validación en PDF procesado 100% de manera local.
 
-## Alcance y operación sin costo adicional
+## Fase 2
 
-El proyecto está pensado para pocos usuarios y uso ocasional, utilizando el plan gratuito de Render y los modelos disponibles en el plan gratuito de Groq. El objetivo es no generar gastos adicionales por alojar el bot ni por procesar comprobantes, aprovechando el entorno Microsoft 365 ya disponible en la organización.
+El trabajo de esta rama forma parte de la segunda fase del proyecto. [Consulta su alcance y estado](docs/fase_2.md): proyectos y gestiones, configuración de IA, PDF independiente y protección de Telegram. Un segundo canal por WhatsApp queda en evaluación; todavía no está implementado.
+
+## Configuración de esta rama
+
+Esta rama agrega [DeepSeek opcional](docs/deepseek.md) y [proyectos y gestiones desde un Excel central](docs/proyectos_y_gestiones.md). La guía de proyectos explica el orden completo para preparar archivos, obtener IDs con Graph, configurar Render y comprobar permisos antes de activar registros. Sin `MS_CONFIG_ITEM_ID` se conserva el destino único; sin `IA_PROVEEDOR` se conserva Groq.
+
+Cada proyecto tiene su propio Excel y una hoja por gestión. El administrador define `gestion_actual` (por ejemplo, `2026`); el bot nunca la cambia por calendario. Cada persona solo puede elegir sus proyectos autorizados.
+
+En [ejemplos/excel](ejemplos/excel/README.md) hay dos archivos XLSX: un catálogo de accesos/configuración y un proyecto con hojas 2025 y 2026. Su README explica los campos, datos ficticios, saldo inicial, fórmulas y conexión con Graph.
+
+## Alcance y costos
+
+El proyecto está pensado para pocos usuarios y uso ocasional, utilizando el plan gratuito de Render y los modelos disponibles en el plan gratuito de Groq. Ese sigue siendo el modo original sin gasto adicional de IA, sujeto a la disponibilidad de modelos y cuota. La alternativa DeepSeek requiere saldo y cobra por consumo; se activa expresamente con `IA_PROVEEDOR=deepseek`. Se aprovecha el entorno Microsoft 365 ya disponible en la organización.
 
 Se aceptan los tiempos de arranque tras el reposo de Render y los límites de uso de Groq. Las sesiones son temporales y se mantienen en memoria: una operación sin confirmar puede perderse al reiniciar o suspenderse el proceso. En ese caso se debe reenviar la foto. El aviso de reposo se intenta enviar durante el apagado, pero no está garantizado. Los registros ya guardados permanecen en Excel de SharePoint.
 
 La arquitectura actual no requiere una base de datos de sesiones, colas externas ni servicios de pago adicionales. Las mejoras deben priorizar la integridad de los registros y mantener este alcance.
 
 ## ✨ Características
+* **Reenvíos de Telegram:** Un registro de `update_id` evita repetir el procesamiento del mismo evento antes de consultar Excel, llamar a IA o enviar documentos. No requiere variables nuevas; [consulta su alcance y límites](docs/deduplicacion_telegram.md).
 * **Webhook Protegido:** Las solicitudes requieren el secreto compartido con Telegram antes de procesar mensajes. Configura `TELEGRAM_WEBHOOK_SECRET` y registra el mismo valor en Telegram según [la guía del webhook](docs/webhook_telegram.md).
-* **Acceso desde Excel:** Solo los IDs activos de la tabla `USUARIOS_AUTORIZADOS` pueden usar el bot. `/mi_id` es público para solicitar el alta. Se usa un Excel separado configurado con `MS_USUARIOS_ITEM_ID`; [consulta la guía de configuración](docs/control_acceso.md) antes de habilitar esta versión.
-* **Procesamiento de Imágenes con IA:** Pipeline de dos pasos: (1) un modelo de visión transcribe el texto del comprobante, y (2) un modelo de texto interpreta y estructura los datos en un esquema JSON. Los modelos se configuran desde `GROQ_MODELO_VISION` y `GROQ_MODELO_TEXTO` en Render o `.env`; [consulta los valores por defecto y opciones](docs/modelos_groq.md).
+* **Acceso desde Excel:** Solo los IDs activos de la tabla `USUARIOS_AUTORIZADOS` pueden usar el bot. `/mi_id` es público para solicitar el alta. En modo tradicional se usa un Excel separado configurado con `MS_USUARIOS_ITEM_ID`; con proyectos, se usa el catálogo `MS_CONFIG_ITEM_ID`; [consulta la guía de configuración](docs/control_acceso.md) antes de habilitar esta versión.
+* **Procesamiento de Imágenes con IA:** Pipeline de dos pasos: (1) un modelo de visión transcribe el texto del comprobante, y (2) un modelo de texto interpreta y estructura los datos en un esquema JSON. El proveedor y sus modelos se configuran en Render o `.env`; consulta [Groq](docs/modelos_groq.md) o [DeepSeek](docs/deepseek.md). Los valores históricos de Groq no garantizan disponibilidad actual.
 * **Flujo Conversacional Interactivo:** Sistema dinámico que permite al usuario confirmar los datos extraídos, editarlos manualmente en bloque mediante un formato estructurado con signos de interrogación (`?`) o cancelar la operación antes de registrar.
 * **Validación antes de Guardar:** El monto debe ser numérico, finito y mayor que cero; Ing/Eg debe ser Ingreso o Egreso. Los datos inválidos se conservan para corregirlos con la opción 3.
 * **Errores Diferenciados:** Una falla consultando Excel permite reintentar sin pedir un saldo inicial nuevo. Si falla el PDF después de guardar, el bot aclara que el registro ya existe y no debe repetirse.
-* **PDF sin Registro:** La opción 5, «Generar PDF sin registrar en Excel», genera el comprobante sin guardar en Excel y lo marca como prueba. Si falta el saldo inicial o falla su consulta, `/solo_pdf` permite continuar para probar. Los datos quedan disponibles para editar o cancelar.
+* **PDF sin Registro:** La opción 5, «Generar PDF sin registrar en Excel», genera el comprobante sin guardar en Excel y lo marca como prueba. También puedes escribir `/solo_pdf` antes de enviar la foto para omitir la selección de proyecto y consulta del archivo contable. Si falta el saldo inicial o falla su consulta, `/solo_pdf` permite continuar para probar. Los datos quedan disponibles para editar o cancelar.
 * **Asignación Correlativa:** Python calcula el número de operación del día consultando las filas de Excel y genera el código mostrado en el mensaje y el PDF. La escritura deja `CÓDIGO` y `SALDO` a las fórmulas del archivo contable; esos valores calculados por Excel no se vuelven a leer para generar el PDF.
 * **Generación Local de PDF:** Creación de comprobantes con `fpdf2` y una plantilla separada (`plantilla.html`), con la imagen original en una segunda página y archivos temporales locales durante el envío.
 * **Limpieza de Almacenamiento:** Tras generar y enviar el PDF, o si falla el proceso, se intenta borrar tanto el PDF como la imagen temporal del servidor.
 
 ## 🛠️ Stack Tecnológico
 * **Core:** Python 3.11+ & FastAPI (servidor web asíncrono gestionado con Uvicorn).
-* **Inteligencia Artificial:** OpenAI SDK (redireccionado a Groq). Pipeline OCR multimodal + interpretación de texto.
+* **Inteligencia Artificial:** OpenAI SDK (dirigido a Groq o DeepSeek según configuración). Pipeline OCR multimodal + interpretación de texto.
 * **Manipulación de PDFs:** `fpdf2` (conversión nativa y ligera de HTML a PDF en local).
-* **Integración de Datos:** Conexión nativa a Microsoft Graph API (con `msal`) para registrar en SharePoint de forma directa.
+* **Integración de Datos:** Microsoft Graph API (con `msal`) para SharePoint y `openpyxl` para leer el catálogo descargado. La compatibilidad de autenticación de las operaciones workbook debe verificarse antes de activar registros.
 
 ## 📂 Estructura del repositorio
 ```text
 tesoreria-chatbot/
 │
 ├── main.py              # Lógica principal de FastAPI, webhooks y estados de los usuarios en Telegram.
+├── catalogo.py          # Valida proyectos, gestión actual, destinos y permisos.
+├── seguridad.py         # Oculta secretos en los registros y neutraliza fórmulas de Excel.
 ├── servicios.py         # Configuración de modelos, pipeline OCR+LLM, y operaciones CRUD en SharePoint.
 ├── generador_pdf.py     # Módulo encargado de leer el HTML, inyectar variables y compilar el PDF local.
 ├── plantilla.html       # Molde de diseño y estructura visual con etiquetas {{campo}} para el PDF.
 ├── requirements.txt     # Dependencias y librerías de Python requeridas para producción.
+├── .env.example         # Configuración de ejemplo sin secretos.
+├── herramientas/        # Diagnóstico (verificar_configuracion) y obtención de IDs de Graph (obtener_ids), solo lectura.
 ├── .env                 # Variables de entorno y credenciales (ignorado en git; crear localmente).
 ├── infografia.png       # Imagen guía del flujo del chatbot.
 ├── logo.png             # Imagen de identidad visual del bot para documentación y PDF.
@@ -58,10 +75,12 @@ tesoreria-chatbot/
 
 Para configurar SharePoint desde cero, sigue [Microsoft Graph paso a paso](docs/microsoft_graph_paso_a_paso.md): incluye consultas, respuestas esperadas, solución de errores y comprobación de permisos.
 
+Para dejar funcionando varios proyectos (con archivos y ejecuciones distintas) paso a paso, usa la [guía rápida](docs/guia_rapida.md).
+
 Consulta los detalles de operación y cambios en [la documentación de integración](docs/documentacion_integracion.md) y [la guía de producción](docs/instalacion_prod.md).
 
 ## Verificación y alcance actual
 
-La documentación describe el código del repositorio; no confirma por sí sola que esa versión esté desplegada en Render. La suite local se ejecuta con `python -m unittest discover -s tests -v` y sustituye las integraciones externas. Queda comprobar el acceso real de la aplicación a SharePoint y la recepción de Telegram después de configurar y desplegar. Microsoft documenta que las operaciones de tablas Excel utilizadas no admiten permisos de aplicación, mientras el código actual usa `client_credentials`; [la guía de Graph](docs/microsoft_graph_paso_a_paso.md) explica esta incompatibilidad y cómo diagnosticarla. Un ID obtenido en Graph Explorer no demuestra compatibilidad de la autenticación del bot.
+La documentación describe el código del repositorio; no confirma por sí sola que esa versión esté desplegada en Render. Tras instalar requirements.txt, la suite local se ejecuta con `python -m unittest discover -s tests -v` y sustituye las integraciones externas. Queda comprobar el acceso real de la aplicación a SharePoint y la recepción de Telegram después de configurar y desplegar. Microsoft documenta que las operaciones de tablas Excel utilizadas no admiten permisos de aplicación, mientras el código actual usa `client_credentials`; [la guía de Graph](docs/microsoft_graph_paso_a_paso.md) explica esta incompatibilidad y cómo diagnosticarla. Un ID obtenido en Graph Explorer no demuestra compatibilidad de la autenticación del bot.
 
-Los campos del Excel contable y la plantilla del PDF se mantienen. La opción 5 no implementa un formato nuevo de informe por proyecto ni registra un historial de PDFs. La deduplicación de eventos por `update_id` sigue pendiente. Las imágenes existentes se conservan.
+Se conservan las 13 columnas contables y los campos del PDF; cuando hay un destino seleccionado, el PDF añade el proyecto y la gestión. La opción 5 no implementa un formato nuevo de informe por proyecto ni registra un historial de PDFs. La [deduplicación de eventos por `update_id`](docs/deduplicacion_telegram.md) conserva hasta 10 000 IDs durante 24 horas en un único proceso; se pierde al reiniciar y no detecta fotos enviadas otra vez como mensajes nuevos. Las imágenes existentes se conservan.

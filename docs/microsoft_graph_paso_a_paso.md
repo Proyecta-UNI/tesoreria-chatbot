@@ -352,3 +352,7 @@ Antes de darlo por listo:
 - [ ] `/mi_id`, acceso autorizado y PDF sin registro se comprueban desde Telegram después del despliegue.
 
 Las confirmaciones de navegación e ID compartidas en la sesión no sustituyen una prueba de producción. Las 42 pruebas locales del repositorio simulan integraciones: no verifican permisos de Microsoft Graph.
+
+## 11. Varios proyectos y hojas por gestión
+
+Para la nueva rama, sigue [proyectos y gestiones](proyectos_y_gestiones.md). `MS_CONFIG_ITEM_ID` identifica el Excel central, descargado mediante `/drives/{drive_id}/items/{item_id}/content`; esa descarga sí documenta permisos de aplicación. Las tablas de movimientos siguen usando operaciones workbook, por lo que la limitación del apartado 8 sigue siendo pertinente. El campo `gestion_actual` se define manualmente en PROYECTOS (por ejemplo, 2026), sin cálculo por fechas. El diagnóstico de la nueva rama comprueba el catálogo y cada hoja/tabla actual sin insertar filas.
