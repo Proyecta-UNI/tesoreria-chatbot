@@ -1,6 +1,8 @@
 import os
+import time
+import asyncio
 import requests
-import traceback
+import threading
 import math
 import re
 import secrets
@@ -17,6 +19,7 @@ from servicios import usuario_autorizado
 from servicios import MS_CONFIG_ITEM_ID, obtener_destinos_usuario, validar_destino_actual
 from catalogo import ErrorCatalogo
 from eventos_telegram import RegistroActualizaciones, RegistroSaturado
+from seguridad import ocultar_secretos, registrar_excepcion
 from generador_pdf import generar_comprobante_pdf
 
 app = FastAPI()
@@ -31,6 +34,7 @@ if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", TELEGRAM_WEBHOOK_SECRET):
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 user_states = {}
+TIMEOUT_SESION_SEGUNDOS = int(os.environ.get("TIMEOUT_SESION_SEGUNDOS", 10 * 60))
 registro_actualizaciones = RegistroActualizaciones()
 
 @app.get("/")
@@ -164,7 +168,7 @@ def enviar_comprobante_pdf(chat_id, state, datos_finales, solo_pdf=False):
                 try:
                     os.remove(ruta)
                 except OSError:
-                    traceback.print_exc()
+                    registrar_excepcion()
 
 
 def procesar_imagen_y_confirmar(chat_id):
@@ -207,9 +211,20 @@ def procesar_imagen_y_confirmar(chat_id):
             user_states.pop(chat_id, None)
 
     except Exception as e:
-        traceback.print_exc()
+        registrar_excepcion()
         enviar_mensaje(chat_id, "Ocurrió un error interno procesando la imagen... o quizás mis lentes están sucios... Por favor, intenta de nuevo mientras los limpio.")
         user_states.pop(chat_id, None)
+
+# procesar_actualizacion hace llamadas de red bloqueantes (OCR, IA, Graph, Telegram). Se ejecuta
+# fuera del bucle de eventos para que el servidor siga respondiendo, pero de una en una: el flujo
+# comparte estado en memoria y el cálculo del número de operación no es atómico.
+bloqueo_procesamiento = threading.Lock()
+
+
+def _procesar_en_serie(data):
+    with bloqueo_procesamiento:
+        return procesar_actualizacion(data)
+
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
@@ -232,7 +247,7 @@ async def telegram_webhook(request: Request):
 
     # El ID queda reservado incluso si este intento lanza una excepción: algunos
     # efectos pueden haberse completado antes de perder la respuesta HTTP.
-    return procesar_actualizacion(data)
+    return await asyncio.to_thread(_procesar_en_serie, data)
 
 
 def procesar_actualizacion(data):
@@ -257,6 +272,18 @@ def procesar_actualizacion(data):
         enviar_mensaje(chat_id, "Para registrar movimientos por proyecto, escríbeme por privado. ¡Muu! 🐮")
         return {"status": "ok"}
 
+    # --- CADUCIDAD DE SESIÓN (TTL) ---
+    ahora = time.time()
+    sesion_expirada = False
+    state = user_states.get(chat_id)
+    if state:
+        if ahora - state.get("ultima_actividad", ahora) > TIMEOUT_SESION_SEGUNDOS:
+            user_states.pop(chat_id, None)
+            state = None
+            sesion_expirada = True
+        else:
+            state["ultima_actividad"] = ahora
+
     # --- 1. RECEPCIÓN DE IMAGEN ---
     if "photo" in message:
         solo_pdf = user_states.get(chat_id, {}).get("step") == "esperar_foto_pdf"
@@ -274,6 +301,7 @@ def procesar_actualizacion(data):
             "contexto_manual": {},
             "usuario_id": usuario_id,
             "modo_solo_pdf": solo_pdf,
+            "ultima_actividad": ahora,
         }
         if solo_pdf:
             continuar_registro(chat_id)
@@ -319,9 +347,18 @@ def procesar_actualizacion(data):
     
         return {"status": "ok"}
 
+    if sesion_expirada:
+        enviar_mensaje(
+            chat_id,
+            "💤 ¡Muu! Pasaron más de 10 minutos sin novedades y me fui a rumiar un ratito... 🐮\n\n"
+            "Por seguridad, borrón y cuenta nueva con la operación anterior. "
+            "Cuando quieras retomarla, vuelve a enviarme la foto del comprobante y lo revisamos juntitos."
+        )
+        return {"status": "ok"}
+
     state = user_states.get(chat_id)
     if text.lower() == "/solo_pdf" and not state:
-        user_states[chat_id] = {"step": "esperar_foto_pdf", "usuario_id": usuario_id}
+        user_states[chat_id] = {"step": "esperar_foto_pdf", "usuario_id": usuario_id, "ultima_actividad": ahora}
         enviar_mensaje(chat_id, "Envíame la foto y prepararemos un PDF sin guardar movimientos en Excel. Puedes añadir la explicación en la leyenda.")
         return {"status": "ok"}
     if not state:
@@ -460,7 +497,7 @@ def procesar_actualizacion(data):
                 enviar_mensaje(chat_id, f"No guardé la operación. {e} Usa la opción 3 para corregirla.")
                 return {"status": "ok"}
             except Exception:
-                traceback.print_exc()
+                registrar_excepcion()
                 # Una escritura con timeout puede haber llegado a Excel.
                 state["step"] = "verificar_guardado"
                 enviar_mensaje(chat_id, "No pude confirmar el guardado. Antes de registrar otra vez, pide al área de TIC que revise si la operación aparece en Excel para evitar duplicados. Tus datos siguen en esta sesión; usa /cancelar cuando termines de verificar.")
@@ -476,7 +513,7 @@ def procesar_actualizacion(data):
                     enviar_mensaje(chat_id, f"Operación <b>{codigo_asignado}</b> guardada. Generando tu PDF...")
                     enviar_comprobante_pdf(chat_id, state, datos_finales)
             except Exception:
-                traceback.print_exc()
+                registrar_excepcion()
                 detalle = "falló la generación o el envío del PDF" if text == "2" else "falló el envío de la confirmación"
                 enviar_mensaje(chat_id, f"La operación <b>{codigo_asignado}</b> ya está guardada en Excel, pero {detalle}. No vuelvas a registrarla. Contacta al área de TIC si necesitas el respaldo.")
 
@@ -502,7 +539,7 @@ def procesar_actualizacion(data):
                 enviar_comprobante_pdf(chat_id, state, datos_prueba, solo_pdf=True)
                 enviar_mensaje(chat_id, "🧪 PDF de prueba enviado. No se guardó nada en Excel. Puedes seguir editando o usar /cancelar para terminar.")
             except Exception:
-                traceback.print_exc()
+                registrar_excepcion()
                 enviar_mensaje(chat_id, "No pude generar o enviar el PDF de prueba. No se guardó nada en Excel y tus datos siguen disponibles. Escribe 5 para reintentar o 3 para editar.")
 
         elif text in ["3", "editar"]:
@@ -576,4 +613,4 @@ def aviso_de_hibernacion():
                 json={"chat_id": chat_id, "text": mensaje_toribio}
             )
         except Exception as e:
-            print(f"Error al avisar de la siesta al chat {chat_id}: {e}")
+            print(f"Error al avisar de la siesta al chat {chat_id}: {ocultar_secretos(e)}")

@@ -3,6 +3,8 @@
 Las integraciones se sustituyen al importar; se ejecutan las funciones reales
 de servicios.py y main.py con respuestas controladas.
 """
+import asyncio
+import time
 import importlib.util
 from itertools import count
 import os
@@ -144,7 +146,7 @@ class FlujoRegistro(unittest.TestCase):
         self.enterContext(patch.object(main, "usuario_autorizado", return_value=True))
         self.saldo = self.enterContext(patch.object(main, "obtener_saldo_actual", return_value=100))
         self.guardar = self.enterContext(patch.object(main, "guardar_en_excel", return_value={**datos_validos(), "codigo": "O16102601"}))
-        self.enterContext(patch.object(main.traceback, "print_exc"))
+        self.enterContext(patch.object(main, "registrar_excepcion"))
         self.anterior = os.getcwd()
         temporal = self.enterContext(tempfile.TemporaryDirectory(dir=RAIZ))
         os.chdir(temporal)
@@ -162,16 +164,9 @@ class FlujoRegistro(unittest.TestCase):
         async def json():
             return {"update_id": next(IDS_ACTUALIZACIONES) if update_id is None else update_id, "message": mensaje}
         request.json = json
-        # Este webhook y request.json no suspenden en las pruebas: no hace falta
-        # abrir sockets ni iniciar un bucle de eventos para ejecutar la corrutina.
-        corrutina = main.telegram_webhook(request)
-        try:
-            corrutina.send(None)
-        except StopIteration:
-            return
-        finally:
-            corrutina.close()
-        self.fail("El webhook suspendió inesperadamente durante una prueba sin I/O")
+        # El webhook procesa en un hilo (asyncio.to_thread), así que necesita un bucle de eventos.
+        # Sin sockets: request.json y las integraciones están sustituidos.
+        asyncio.run(main.telegram_webhook(request))
 
     def test_validacion_conserva_sesion_y_no_consulta_excel(self):
         main.user_states["1"]["datos_procesados"]["monto"] = None
@@ -234,7 +229,21 @@ class FlujoRegistro(unittest.TestCase):
             self.enviar("5")
         self.guardar.assert_not_called()
         self.assertEqual(main.user_states["1"]["step"], "confirmar")
-        self.assertIn("No se guardó nada en Excel", self.mensajes.call_args.args[1])
+
+    def test_sesion_expira_tras_inactividad(self):
+        main.user_states["1"]["ultima_actividad"] = time.time() - (main.TIMEOUT_SESION_SEGUNDOS + 10)
+        self.enviar("1")
+        self.assertNotIn("1", main.user_states)
+        self.guardar.assert_not_called()
+        self.assertIn("rumiar", self.mensajes.call_args.args[1])
+
+    def test_sesion_expirada_permite_enviar_nueva_foto_directamente(self):
+        main.user_states["1"]["ultima_actividad"] = time.time() - (main.TIMEOUT_SESION_SEGUNDOS + 10)
+        self.enviar(foto=True)
+        self.assertIn("1", main.user_states)
+        self.assertEqual(main.user_states["1"]["file_id"], "foto")
+
+        self.assertIn("Recibido", self.mensajes.call_args.args[1])
 
     def test_solo_pdf_valida_datos(self):
         main.user_states["1"]["datos_procesados"]["ing_eg"] = "No determinado"

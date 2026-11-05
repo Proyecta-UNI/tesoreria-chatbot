@@ -59,12 +59,13 @@ tesoreria-chatbot/
 │
 ├── main.py              # Lógica principal de FastAPI, webhooks y estados de los usuarios en Telegram.
 ├── catalogo.py          # Valida proyectos, gestión actual, destinos y permisos.
+├── seguridad.py         # Oculta secretos en los registros y neutraliza fórmulas de Excel.
 ├── servicios.py         # Configuración de modelos, pipeline OCR+LLM, y operaciones CRUD en SharePoint.
 ├── generador_pdf.py     # Módulo encargado de leer el HTML, inyectar variables y compilar el PDF local.
 ├── plantilla.html       # Molde de diseño y estructura visual con etiquetas {{campo}} para el PDF.
 ├── requirements.txt     # Dependencias y librerías de Python requeridas para producción.
 ├── .env.example         # Configuración de ejemplo sin secretos.
-├── herramientas/        # Diagnóstico del catálogo y Graph, solo lectura.
+├── herramientas/        # Diagnóstico (verificar_configuracion) y obtención de IDs de Graph (obtener_ids), solo lectura.
 ├── .env                 # Variables de entorno y credenciales (ignorado en git; crear localmente).
 ├── infografia.png       # Imagen guía del flujo del chatbot.
 ├── logo.png             # Imagen de identidad visual del bot para documentación y PDF.
@@ -73,6 +74,8 @@ tesoreria-chatbot/
 ```
 
 Para configurar SharePoint desde cero, sigue [Microsoft Graph paso a paso](docs/microsoft_graph_paso_a_paso.md): incluye consultas, respuestas esperadas, solución de errores y comprobación de permisos.
+
+Para dejar funcionando varios proyectos (con archivos y ejecuciones distintas) paso a paso, usa la [guía rápida](docs/guia_rapida.md).
 
 Consulta los detalles de operación y cambios en [la documentación de integración](docs/documentacion_integracion.md) y [la guía de producción](docs/instalacion_prod.md).
 

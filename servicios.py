@@ -9,6 +9,7 @@ from openai import OpenAI
 from datetime import date, datetime, timezone, timedelta
 import msal
 from catalogo import Catalogo, ErrorCatalogo, leer_tablas_xlsx
+from seguridad import neutralizar_formula, ocultar_secretos
 
 # --- PROVEEDOR DE IA (optativo; conserva Groq en instalaciones existentes) ---
 IA_PROVEEDOR = (os.getenv("IA_PROVEEDOR") or "groq").strip().lower()
@@ -132,7 +133,7 @@ def obtener_token_ms():
     if "access_token" in result:
         return result["access_token"]
     else:
-        print(f"Error obteniendo token: {result.get('error')}")
+        print(f"Error obteniendo token: {ocultar_secretos(result.get('error'))}")
         return None
 
 def _normalizar_telegram_id(valor):
@@ -353,7 +354,7 @@ def obtener_saldo_actual(destino=None):
             raise ErrorConsultaSaldo("Hay registros en Excel, pero no un saldo válido.")
         return None # Solo filas vacías: todavía no hay un saldo inicial
     except Exception as e:
-        print(f"Excepción obteniendo saldo actual: {e}")
+        print(f"Excepción obteniendo saldo actual: {ocultar_secretos(e)}")
         raise ErrorConsultaSaldo("No se pudo consultar el saldo de Excel.") from e
 
 def _extraer_texto_de_imagen(image_bytes: bytes) -> str:
@@ -426,7 +427,7 @@ def extraer_datos_recibo_llm(image_bytes: bytes, contexto_usuario: str) -> dict:
         texto_ocr = _extraer_texto_de_imagen(image_bytes)
         print(f"--- TEXTO OCR EXTRAÍDO ---\n{texto_ocr}\n--- FIN OCR ---")
     except Exception as e:
-        print(f"Error en OCR multimodal: {e}")
+        print(f"Error en OCR multimodal: {ocultar_secretos(e)}")
         msg = _identificar_error_llm(e)
         return {"error": True, "mensaje": msg} if msg else {"error": True}
 
@@ -466,7 +467,7 @@ Devuelve exclusivamente un JSON válido con esta estructura:
     "motivo": "Motivo encontrado o deducido en el comprobante o contexto. Si no existe: 'No disponible'",
     "acreedor": "Razón social completa si aparece en el comprobante. Si solo hay nombre comercial, usar ese. Si no existe: 'No aplica'",
     "deudor": "Persona que realizó la compra o entrega dinero (puede venir del contexto). Si no existe: 'No aplica'",
-    "estado": "Pagado, Pendiente, Rechazado u otro si aparece. Si no: 'No determinado'",
+    "estado": "Siempre 'Pagado'",
     "monto": 0.00
 }}"""
 
@@ -488,10 +489,11 @@ Devuelve exclusivamente un JSON válido con esta estructura:
         if set(datos.keys()) != campos_requeridos:
             raise ValueError(f"Campos JSON incorrectos: {list(datos.keys())}")
 
+        datos["estado"] = "Pagado"
         return datos
 
     except Exception as e:
-        print(f"Error en LLM interpretación: {e}")
+        print(f"Error en LLM interpretación: {ocultar_secretos(e)}")
         try:
             print("Respuesta recibida:")
             print(response.choices[0].message.content)
@@ -565,7 +567,7 @@ def calcular_codigo_y_nro(fecha_str: str, formato_usa: bool = False, destino=Non
         except Exception as e:
             if destino is not None:
                 raise ErrorConsultaSaldo("No se pudo calcular la numeración del destino.") from e
-            print(f"Error calculando autoincremental: {e}")
+            print(f"Error calculando autoincremental: {ocultar_secretos(e)}")
     elif destino is not None:
         raise ErrorConsultaSaldo("No se pudo autenticar para calcular la numeración.")
 
@@ -618,13 +620,13 @@ def guardar_en_excel(datos: dict, saldo_previo: float, formato_usa: bool = False
         None,
         datos["fecha"],
         str(nro_operacion_dia),
-        datos["concepto"],
-        datos["tipo"],
+        neutralizar_formula(datos["concepto"]),
+        neutralizar_formula(datos["tipo"]),
         clasificacion.capitalize(),
-        datos["motivo"],
-        datos["acreedor"],
-        datos["deudor"],
-        datos["estado"],
+        neutralizar_formula(datos["motivo"]),
+        neutralizar_formula(datos["acreedor"]),
+        neutralizar_formula(datos["deudor"]),
+        neutralizar_formula(datos["estado"]),
         ingreso_val,
         egreso_val,
         None

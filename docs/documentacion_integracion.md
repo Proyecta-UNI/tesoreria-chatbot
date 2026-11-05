@@ -117,6 +117,15 @@ Ver [configuración y activación del webhook protegido](webhook_telegram.md). N
 *   **Eliminación de Gateway Local:** Al apuntar directamente a la nube de Microsoft, se eliminó la dependencia de un "Personal Gateway" instalado en una máquina física.
 *   **Actualización Programada:** Se configuraron credenciales OAuth2 (Nivel Organizacional) en Power BI Service. Se programó el modelo semántico para ejecutar actualizaciones autónomas y periódicas (ej. diaria a la 1:00 a.m.), obteniendo la data de SharePoint sin intervención manual.
 
+### 2.7 Requerimientos Funcionales y Modelo Operativo (Toribot y Proyectos)
+En alineación con los requerimientos de la directiva y el modelo financiero de la organización:
+*   **Conservación del campo `Tipo`:** Se mantiene la extracción y categorización del tipo de movimiento (compra, servicios, pasajes/movilidad, donaciones, transferencias) para preservar la granularidad contable y evitar clasificar forzosamente todos los egresos como compras.
+*   **Estandarización del campo `Estado` a "Pagado":** Los proyectos operan bajo un esquema de fondos asignados por adelantado (caja chica / presupuesto aprobado). Los comprobantes enviados representan operaciones ya canceladas. Por tanto, el campo `estado` se fija de forma estática en `"Pagado"`, eliminando inferencias probabilísticas erróneas por parte del LLM.
+*   **Delimitación del Alcance del Asistente:** El bot opera estrictamente como transcriptor y estructurador de datos tabulares a partir de comprobantes. La administración, control de techos presupuestales y conciliación del saldo inicial corresponden a la gestión humana y a la directiva central.
+*   **Descentralización de Libros Contables:** Cada iniciativa o proyecto dispone de un libro Excel independiente en SharePoint (definido en el catálogo), permitiendo auditar micro-compras operativas sin saturar un libro general ni generar bloqueos de concurrencia entre directores.
+*   **Saldo Base y Fórmulas Iterativas:** El saldo inicial se ingresa o enlaza manualmente en la cabecera del archivo contable (`B3`), mientras que la columna `SALDO` de la tabla se delega a fórmulas acumulativas nativas de Excel (`Saldo Base + Ingresos - Egresos`), garantizando consistencia matemática.
+*   **Caducidad Automática de Sesiones (TTL 10 min):** Cada sesión en memoria mantiene una marca temporal de última actividad. Si transcurren más de 10 minutos de inactividad, la sesión se descarta automáticamente. Si el usuario reanuda enviando una foto, se inicia un nuevo flujo sin bloqueos; si reanuda con texto, el bot le notifica con su diálogo característico («me fui a rumiar...») que la sesión previa caducó por seguridad.
+
 ---
 
 ## 3. Configuración de Microsoft Entra y compatibilidad pendiente de verificación

@@ -151,6 +151,9 @@ tener acceso a un proyecto contable.
 en las otras tablas. `gestion_actual` puede ser una celda con `2026` como número o
 texto; se compara con `gestion` de los destinos. No se interpreta como una fecha.
 Una fila por proyecto. Para cambiar el año activo, **solo tú editas ese campo**.
+Puedes añadir columnas informativas, como `fecha_inicio`: el bot las ignora. Si un
+proyecto se ejecuta por semestres, consulta
+[Proyectos con varias ejecuciones](#proyectos-con-varias-ejecuciones-semestres).
 
 ### Tabla DESTINOS_PROYECTO
 
@@ -199,6 +202,30 @@ otros valores lo deshabilitan. En permisos o usuarios duplicados, una fila inact
 prevalece. Evita duplicados; en proyectos y destinos se rechazan por ambiguos.
 Una fila totalmente vacía se ignora. Una configuración mal formada bloquea el
 catálogo completo para evitar utilizar una configuración parcial.
+
+## Proyectos con varias ejecuciones (semestres)
+
+La **gestión** es el año; una **ejecución** es un semestre académico (`26-1`, `26-2`, etc.).
+El catálogo no tiene un campo de ejecución y exige que todas las gestiones de un
+`proyecto_id` sean hojas del **mismo archivo**. Si cada ejecución tiene su propio archivo
+(quizá en otra carpeta o biblioteca), cada ejecución es **su propia fila en PROYECTOS**
+(las fechas son de ejemplo):
+
+| proyecto_id | nombre | gestion_actual | activo | fecha_inicio |
+|---|---|---|---|---|
+| p1mp_26_1 | P1MP · 26-1 | 2026 | Sí | 2026-03-16 |
+| p1mp_26_2 | P1MP · 26-2 | 2026 | No | 2026-08-17 |
+
+- Escribe la ejecución en `proyecto_id` y en `nombre`: la persona ve el nombre al elegir, y
+  debe ser distinto en cada ejecución.
+- Cada ejecución tiene su fila en DESTINOS_PROYECTO con su `drive_id`, `item_id`, hoja y
+  tabla. Los nombres de archivo y de carpeta pueden ser distintos: el bot solo usa los IDs.
+- `fecha_inicio` es una columna **opcional e informativa** (texto AAAA-MM-DD). El bot la
+  ignora: el interruptor es `activo`. Al empezar una ejecución, pásala a `Sí` y cierra la
+  anterior con `No`.
+- El saldo no pasa de una ejecución a otra: cada archivo parte de su saldo inicial.
+- Las ejecuciones cerradas conservan sus filas, que igualmente se validan al cargar el
+  catálogo: una fila mal formada, aunque sea de una ejecución cerrada, bloquea todo.
 
 ## Paso 3. Obtener los IDs mediante Microsoft Graph
 
@@ -250,6 +277,22 @@ recorrido para cada archivo; todos son **GET**, versión **v1.0**:
 
    El nombre de la tabla puede tomarse directamente de **Diseño de tabla** en Excel.
    Verifica que la consulta de worksheet devuelva la hoja de la gestión esperada.
+
+**Atajo: obtener `drive_id` e `item_id` con un script.** En lugar de las consultas 1 a 4,
+`herramientas/obtener_ids.py` los resuelve a partir de la dirección web de cada archivo (la
+que muestra su ruta en SharePoint, no un enlace corto ni `Doc.aspx`):
+
+```powershell
+python herramientas/obtener_ids.py "https://TU_DOMINIO.sharepoint.com/sites/TU_SITIO/Biblioteca/Carpeta/Archivo.xlsx"
+python herramientas/obtener_ids.py --lista urls.txt --csv ids.csv --tablas
+```
+
+`urls.txt` lleva una dirección por línea (`#` comenta). Es de solo lectura y por defecto usa
+la identidad de la aplicación del bot (`MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`),
+así que además comprueba que el bot puede ver cada archivo. `--tablas` lista tablas y hojas:
+ahí Microsoft documenta que los permisos de aplicación no están admitidos. Si falla, repite
+con tu cuenta definiendo `GRAPH_TOKEN` (el token de la pestaña *Access token* de Graph
+Explorer; caduca en aproximadamente una hora y no debe guardarse en el `.env`).
 
 Si un archivo está en otro sitio o biblioteca, repite el recorrido para él. Todos
 los destinos deben estar accesibles para la misma identidad del bot. Un error 403
