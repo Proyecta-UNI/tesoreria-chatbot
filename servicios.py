@@ -525,8 +525,11 @@ def _fecha_excel(valor, formato_usa=False):
     return None
 
 
-def calcular_codigo_y_nro(fecha_str: str, formato_usa: bool = False, destino=None) -> tuple:
-    """Calcula el autoincremental del día consultando las filas de Excel."""
+def calcular_codigo_y_nro(fecha_str: str, formato_usa: bool = False, destino=None, estricto: bool = False) -> tuple:
+    """Calcula el autoincremental del día consultando las filas de Excel.
+
+    Con estricto=True un fallo de lectura lanza ErrorConsultaSaldo en vez de asumir el número 1
+    (necesario cuando el número se entrega sin registrarlo, como en el PDF sin guardar)."""
     meses_letras = ["E", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"]
     try:
         partes = fecha_str.split("/")
@@ -565,16 +568,50 @@ def calcular_codigo_y_nro(fecha_str: str, formato_usa: bool = False, destino=Non
                             pass
                 nro_operacion_dia = conteo_hoy + 1
         except Exception as e:
-            if destino is not None:
+            if destino is not None or estricto:
                 raise ErrorConsultaSaldo("No se pudo calcular la numeración del destino.") from e
             print(f"Error calculando autoincremental: {ocultar_secretos(e)}")
-    elif destino is not None:
+    elif destino is not None or estricto:
         raise ErrorConsultaSaldo("No se pudo autenticar para calcular la numeración.")
 
     nro_str = f"{nro_operacion_dia:02d}" 
     codigo = f"{letra_mes}{fecha_ddmmyy}{nro_str}"
     
     return codigo, nro_operacion_dia
+
+def preparar_datos_pdf(datos: dict, saldo_previo, formato_usa: bool = False, destino=None) -> dict:
+    """Datos del comprobante para exportar solo PDF: lee Excel (código, número de operación del día
+    y saldo) exactamente como el guardado real, pero no escribe nada ni modifica `datos`."""
+    monto_float, clasificacion = validar_operacion(datos)
+    if MS_CONFIG_ITEM_ID and destino is None:
+        raise ErrorCatalogo("No hay un proyecto de destino seleccionado.")
+    datos = datos.copy()
+    usar_usa = formato_usa or FORMATO_FECHA_EXCEL == "US"
+    if destino is not None:
+        try:
+            fecha = datetime.strptime(datos["fecha"], "%m/%d/%Y" if formato_usa else "%d/%m/%Y")
+        except (ValueError, TypeError, KeyError) as e:
+            raise ErrorValidacionOperacion("La fecha no es válida para el formato seleccionado.") from e
+        usar_usa = destino.formato_fecha == "US"
+        datos["fecha"] = fecha.strftime("%m/%d/%Y" if usar_usa else "%d/%m/%Y")
+        datos.update(proyecto=destino.nombre, gestion=destino.gestion)
+    try:
+        codigo, nro_operacion_dia = calcular_codigo_y_nro(datos["fecha"], usar_usa, destino=destino, estricto=True)
+    except ErrorConsultaSaldo:
+        raise
+    except Exception as e:
+        raise ErrorConsultaSaldo("No se pudo calcular la numeración.") from e
+
+    ingreso_val = monto_float if clasificacion == "ingreso" else 0
+    egreso_val = monto_float if clasificacion == "egreso" else 0
+    if saldo_previo is None:
+        saldo = "No disponible"
+    else:
+        saldo = f"{saldo_previo + ingreso_val - egreso_val:.2f}"
+    datos.update(codigo=codigo, nro_operacion_dia=str(nro_operacion_dia),
+                 ingreso_final=ingreso_val, egreso_final=egreso_val, saldo=saldo)
+    return datos
+
 
 def guardar_en_excel(datos: dict, saldo_previo: float, formato_usa: bool = False, destino=None) -> dict:
     """Guarda directamente en el Excel de SharePoint usando Graph API."""

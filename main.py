@@ -7,13 +7,12 @@ import math
 import re
 import secrets
 from html import escape
-from uuid import uuid4
 from fastapi import FastAPI, Request, HTTPException
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from servicios import obtener_saldo_actual, extraer_datos_recibo_llm, guardar_en_excel
+from servicios import obtener_saldo_actual, extraer_datos_recibo_llm, guardar_en_excel, preparar_datos_pdf
 from servicios import ErrorConsultaSaldo, ErrorValidacionOperacion, validar_operacion
 from servicios import usuario_autorizado
 from servicios import MS_CONFIG_ITEM_ID, obtener_destinos_usuario, validar_destino_actual
@@ -50,11 +49,21 @@ def mostrar_resumen_y_opciones(chat_id):
     if not state: return
     d = state["datos_procesados"]
     destino = state.get("destino")
-    ubicacion = (f"<b>Proyecto:</b> {escape(destino.nombre)}\n<b>Gestión:</b> {escape(destino.gestion)}\n"
-                 if destino else "")
+    solo_pdf = bool(state.get("modo_solo_pdf"))
+    if destino:
+        ubicacion = f"📍 <b>Proyecto:</b> {escape(destino.nombre)}\n<b>Gestión:</b> {escape(destino.gestion)}\n"
+    elif MS_CONFIG_ITEM_ID:
+        ubicacion = "📍 <b>Proyecto:</b> ninguno elegido\n"
+    else:
+        ubicacion = ""
+    if solo_pdf:
+        ubicacion += "📄 <b>Modo solo PDF:</b> no se guardará nada en Excel\n"
+    if ubicacion:
+        ubicacion += "\n"
     opciones_registro = ("" if state.get("modo_solo_pdf") or (MS_CONFIG_ITEM_ID and not destino) else
                         "1) Registrar movimiento en Excel\n2) Registrar movimiento en Excel y generar PDF\n")
-    opcion_cambiar_proyecto = "6) Cambiar de proyecto\n" if MS_CONFIG_ITEM_ID and not state.get("modo_solo_pdf") else ""
+    opcion_cambiar_proyecto = "6) Cambiar de proyecto\n" if MS_CONFIG_ITEM_ID and destino else ""
+    opcion_salir_solo_pdf = "7) Salir de solo PDF para poder registrar en Excel\n" if solo_pdf else ""
     resumen = (
         f"🧾 <b>Resumen de la operación:</b>\n\n"
         f"{ubicacion}"
@@ -72,6 +81,7 @@ def mostrar_resumen_y_opciones(chat_id):
         f"4) Alternar formato de fecha (PE ↔ USA)\n"
         f"5) Generar PDF sin registrar en Excel\n"
         f"{opcion_cambiar_proyecto}"
+        f"{opcion_salir_solo_pdf}"
         f"O envía /cancelar para abortar"
     )
     enviar_mensaje(chat_id, resumen)
@@ -83,11 +93,11 @@ def preparar_registro(chat_id):
         saldo_actual = obtener_saldo_actual(**({"destino": destino} if destino else {}))
     except ErrorConsultaSaldo:
         user_states[chat_id]["step"] = "consultar_saldo"
-        enviar_mensaje(chat_id, "¡Chispas! No pude consultar el saldo de Excel. Conservé tu foto. Escribe 1 para reintentar, /solo_pdf para probar sin guardar o /cancelar para salir.")
+        enviar_mensaje(chat_id, "¡Chispas! No pude consultar el saldo de Excel. Conservé tu foto. Escribe 1 para reintentar o /cancelar para salir.")
         return
     if saldo_actual is None:
         user_states[chat_id]["step"] = "pedir_saldo_base"
-        enviar_mensaje(chat_id, "¡Hola! Veo que es el primer registro en la base de datos.\nPara calcular los saldos correctamente, por favor dime: ¿cuál es el <b>Saldo Base / Inicial</b> en caja? (ej. 1500.50). También puedes usar /solo_pdf para probar sin guardar.")
+        enviar_mensaje(chat_id, "¡Hola! Veo que es el primer registro en la base de datos.\nPara calcular los saldos correctamente, por favor dime: ¿cuál es el <b>Saldo Base / Inicial</b> en caja? (ej. 1500.50).")
         return
 
     user_states[chat_id]["saldo_previo"] = saldo_actual
@@ -102,7 +112,7 @@ def elegir_destino(chat_id, usuario_id, texto=""):
         destinos = obtener_destinos_usuario(usuario_id)
     except ErrorCatalogo:
         state["step"] = "elegir_proyecto"
-        enviar_mensaje(chat_id, "No pude consultar tus proyectos. Conservé la foto. Escribe /proyectos para reintentar, /solo_pdf para generar solo el PDF o /cancelar.")
+        enviar_mensaje(chat_id, "No pude consultar tus proyectos. Conservé la foto. Escribe /proyectos para reintentar o /cancelar.")
         return
     elegido = None
     if texto and texto != "/proyectos":
@@ -125,7 +135,7 @@ def elegir_destino(chat_id, usuario_id, texto=""):
                          for i, d in enumerate(destinos, 1))
     enviar_mensaje(chat_id, ("¿A qué proyecto corresponde? Escribe su nombre, identificador o número:\n" + opciones
                             if opciones else "Todavía no tienes un proyecto habilitado. Pídele al equipo de tesorería que lo configure.")
-                   + "\nTambién puedes usar /solo_pdf para generar el PDF sin registrar en Excel, o /cancelar.")
+                   + "\nPuedes usar /cancelar para salir.")
 
 
 def continuar_registro(chat_id):
@@ -139,7 +149,7 @@ def continuar_registro(chat_id):
         enviar_mensaje(chat_id, "¡Recibido! ¿Cómo me cuentas el resto de los detalles?\n\n✍️ Escribe <b>'manual'</b> para que te pregunte paso a paso.\n🗣️ O si prefieres, escríbeme <b>toda la historia junta aquí</b>.\n\n❓ <i>Si no entiendes qué está pasando o quieres ver la guía, escribe <b>/ayuda</b></i>")
 
 
-def enviar_comprobante_pdf(chat_id, state, datos_finales, solo_pdf=False):
+def enviar_comprobante_pdf(chat_id, state, datos_finales):
     """Genera y envía el respaldo; siempre intenta limpiar los archivos temporales."""
     codigo_asignado = datos_finales["codigo"]
     nombre_pdf = f"comprobante_{codigo_asignado}.pdf"
@@ -157,7 +167,7 @@ def enviar_comprobante_pdf(chat_id, state, datos_finales, solo_pdf=False):
         with open(nombre_pdf, 'rb') as archivo:
             respuesta_pdf = requests.post(
                 f"{TELEGRAM_API_URL}/sendDocument",
-                data={"chat_id": chat_id, "caption": "🧪 PDF de prueba: no registrado en Excel" if solo_pdf else f"📄 Respaldo de tu tesorería - Código: {codigo_asignado}"},
+                data={"chat_id": chat_id, "caption": f"📄 Respaldo de tu tesorería - Código: {codigo_asignado}"},
                 files={"document": archivo},
                 timeout=30
             )
@@ -275,8 +285,18 @@ def procesar_actualizacion(data):
             if not destinos:
                 enviar_mensaje(chat_id, "Todavía no tienes proyectos asignados en el catálogo. Pídele al equipo de tesorería que te habilite. ¡Muu! 🐮")
             else:
-                lista = "\n".join(f"• <b>{escape(d.nombre)}</b> · gestión {escape(d.gestion)} (código: <code>{escape(d.proyecto_id)}</code>)" for d in destinos)
-                enviar_mensaje(chat_id, f"📂 <b>Tus proyectos habilitados:</b>\n\n{lista}\n\n<i>Cuando me envíes una foto, podrás elegir a cuál de ellos registrar el movimiento. ¡Muu! 🐮</i>")
+                en_curso = user_states.get(chat_id)
+                actual = en_curso.get("destino") if en_curso else None
+                lista = "\n".join(f"{'✅' if actual and d.proyecto_id == actual.proyecto_id else '•'} <b>{escape(d.nombre)}</b> · gestión {escape(d.gestion)} (código: <code>{escape(d.proyecto_id)}</code>)" for d in destinos)
+                if not en_curso:
+                    situacion = "<i>Cuando me envíes una foto, podrás elegir a cuál de ellos registrar el movimiento. ¡Muu! 🐮</i>"
+                else:
+                    partes = [f"✅ Proyecto actual: <b>{escape(actual.nombre)}</b> (gestión {escape(actual.gestion)})." if actual
+                              else "Todavía no has elegido proyecto para el comprobante en curso."]
+                    if en_curso.get("modo_solo_pdf"):
+                        partes.append("📄 Estás en <b>modo solo PDF</b>: no se guarda nada en Excel. Con la opción 7 del resumen puedes salir de ese modo.")
+                    situacion = "\n".join(partes)
+                enviar_mensaje(chat_id, f"📂 <b>Tus proyectos habilitados:</b>\n\n{lista}\n\n{situacion}")
         except Exception:
             enviar_mensaje(chat_id, "No pude consultar la lista de proyectos en este momento. Intenta de nuevo en unos minutos.")
         return {"status": "ok"}
@@ -319,9 +339,8 @@ def procesar_actualizacion(data):
             "modo_solo_pdf": solo_pdf,
             "ultima_actividad": ahora,
         }
-        if solo_pdf:
-            continuar_registro(chat_id)
-        elif MS_CONFIG_ITEM_ID:
+        # También en solo PDF hace falta el proyecto: de su Excel sale el número de operación.
+        if MS_CONFIG_ITEM_ID:
             elegir_destino(chat_id, usuario_id)
         else:
             preparar_registro(chat_id)
@@ -386,11 +405,7 @@ def procesar_actualizacion(data):
         return {"status": "ok"}
 
     if state.get("step") == "elegir_proyecto":
-        if text.lower() == "/solo_pdf":
-            state["modo_solo_pdf"] = True
-            continuar_registro(chat_id)
-        else:
-            elegir_destino(chat_id, usuario_id, text)
+        elegir_destino(chat_id, usuario_id, text)
         return {"status": "ok"}
 
     if state.get("step") == "cambiar_proyecto":
@@ -410,14 +425,6 @@ def procesar_actualizacion(data):
         else:
             opciones = "\n".join(f"{i}) {escape(d.nombre)}" for i, d in enumerate(destinos, 1))
             enviar_mensaje(chat_id, f"No reconocí ese proyecto. Por favor escribe el número o nombre:\n\n{opciones}")
-        return {"status": "ok"}
-
-    if text.lower() == "/solo_pdf" and state.get("step") in ("consultar_saldo", "pedir_saldo_base"):
-        if "datos_procesados" in state:
-            state["step"] = "confirmar"
-            mostrar_resumen_y_opciones(chat_id)
-        else:
-            continuar_registro(chat_id)
         return {"status": "ok"}
 
     if state.get("step") == "verificar_guardado":
@@ -497,7 +504,7 @@ def procesar_actualizacion(data):
         if text in ["1", "2"]:
             destino = state.get("destino")
             if state.get("modo_solo_pdf") or (MS_CONFIG_ITEM_ID and not destino):
-                enviar_mensaje(chat_id, "Este comprobante está preparado solo para PDF. Usa 5 para exportarlo. Para registrarlo, cancela y envía la foto para comenzar un registro nuevo.")
+                enviar_mensaje(chat_id, "Este comprobante está en modo solo PDF. Usa 5 para exportarlo, o 7 para salir de ese modo y poder registrarlo en Excel.")
                 return {"status": "ok"}
             if MS_CONFIG_ITEM_ID:
                 try:
@@ -520,7 +527,7 @@ def procesar_actualizacion(data):
                 state["saldo_previo"] = saldo_actual
             if state.get("saldo_previo") is None:
                 state["step"] = "pedir_saldo_base"
-                enviar_mensaje(chat_id, "Para guardar esta primera operación necesito el saldo inicial. Envíalo como número con punto decimal (ej. 1500.50), o usa /solo_pdf para continuar sin guardar.")
+                enviar_mensaje(chat_id, "Para guardar esta primera operación necesito el saldo inicial. Envíalo como número con punto decimal (ej. 1500.50).")
                 return {"status": "ok"}
 
             try:
@@ -554,28 +561,30 @@ def procesar_actualizacion(data):
 
         elif text == "5":
             try:
-                monto, clasificacion = validar_operacion(state["datos_procesados"])
+                validar_operacion(state["datos_procesados"])
             except ErrorValidacionOperacion as e:
-                enviar_mensaje(chat_id, f"No pude generar el PDF de prueba. {e} Usa la opción 3 para corregir los datos.")
+                enviar_mensaje(chat_id, f"No pude generar el PDF. {e} Usa la opción 3 para corregir los datos.")
                 return {"status": "ok"}
-            datos_prueba = {
-                **state["datos_procesados"],
-                "codigo": f"PRUEBA_{uuid4().hex[:12]}",
-                "nro_operacion_dia": "Sin registro",
-                "ingreso_final": monto if clasificacion == "ingreso" else 0,
-                "egreso_final": monto if clasificacion == "egreso" else 0,
-                "saldo": "No calculado (prueba)",
-                "solo_pdf": True,
-            }
             destino = state.get("destino")
-            if destino:
-                datos_prueba.update(proyecto=destino.nombre, gestion=destino.gestion)
+            extra = {"destino": destino} if destino else {}
+            # El PDF lleva el código y el número de operación que le corresponden en Excel,
+            # así que se consulta (solo lectura) igual que al guardar; no se escribe nada.
             try:
-                enviar_comprobante_pdf(chat_id, state, datos_prueba, solo_pdf=True)
-                enviar_mensaje(chat_id, "🧪 PDF de prueba enviado. No se guardó nada en Excel. Puedes seguir editando o usar /cancelar para terminar.")
+                saldo_actual = obtener_saldo_actual(**extra)
+                saldo_base = saldo_actual if saldo_actual is not None else state.get("saldo_previo")
+                datos_pdf = preparar_datos_pdf(state["datos_procesados"], saldo_base, state.get("fecha_usa", False), **extra)
+            except ErrorValidacionOperacion as e:
+                enviar_mensaje(chat_id, f"No pude generar el PDF. {e} Usa la opción 3 para corregir los datos.")
+                return {"status": "ok"}
+            except (ErrorConsultaSaldo, ErrorCatalogo):
+                enviar_mensaje(chat_id, "No pude consultar Excel para obtener el número de operación, así que no generé el PDF (así evito darte un número equivocado). Tus datos siguen disponibles: escribe 5 para reintentar.")
+                return {"status": "ok"}
+            try:
+                enviar_comprobante_pdf(chat_id, state, datos_pdf)
+                enviar_mensaje(chat_id, f"📄 Listo: PDF enviado con el código <b>{escape(str(datos_pdf['codigo']))}</b>. Ojo: no se registró en Excel, así que ese número sigue libre. Puedes seguir editando o usar /cancelar para terminar.")
             except Exception:
                 registrar_excepcion()
-                enviar_mensaje(chat_id, "No pude generar o enviar el PDF de prueba. No se guardó nada en Excel y tus datos siguen disponibles. Escribe 5 para reintentar o 3 para editar.")
+                enviar_mensaje(chat_id, "No pude generar o enviar el PDF. Tus datos siguen disponibles. Escribe 5 para reintentar o 3 para editar.")
 
         elif text in ["3", "editar"]:
             state["step"] = "editar"
@@ -611,6 +620,12 @@ def procesar_actualizacion(data):
             except:
                 enviar_mensaje(chat_id, "No pude convertir la fecha. Verifica que tenga formato válido o edítala manualmente (opción 3).")
             mostrar_resumen_y_opciones(chat_id)
+        elif text == "7" and state.get("modo_solo_pdf"):
+            # 1 y 2 vuelven a consultar el saldo y a validar proyecto y permiso antes de guardar.
+            state["modo_solo_pdf"] = False
+            enviar_mensaje(chat_id, "✅ Saliste del modo solo PDF. Ya puedes registrar con 1 o 2.")
+            mostrar_resumen_y_opciones(chat_id)
+            return {"status": "ok"}
         elif text in ["6", "proyecto", "proyectos", "cambiar", "cambiar proyecto"] and MS_CONFIG_ITEM_ID:
             destinos = obtener_destinos_usuario(usuario_id)
             if len(destinos) <= 1:

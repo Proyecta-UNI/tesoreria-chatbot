@@ -63,7 +63,7 @@ Las sesiones se guardan únicamente en memoria. Si Render suspende o reinicia el
 
 Esta rama agrega openpyxl para leer el Excel central; instálalo mediante requirements.txt. El webhook requiere `TELEGRAM_WEBHOOK_SECRET`. Para accesos usa `MS_USUARIOS_ITEM_ID` en modo tradicional o `MS_CONFIG_ITEM_ID` en modo de proyectos, según las guías enlazadas.
 
-Para experimentar sin escribir en SharePoint, envía una foto, completa los datos y elige **5) Generar PDF sin registrar en Excel** en el resumen. Si Excel está vacío o falla la consulta inicial de saldo, usa `/solo_pdf` para continuar sin saldo inicial. El PDF se marca como prueba y la sesión permanece abierta para editar o cancelar. Las opciones 1 y 2 sí guardan registros reales.
+Para obtener el PDF sin escribir en SharePoint, envía una foto, completa los datos y elige **5) Generar PDF sin registrar en Excel** en el resumen. El bot consulta Excel (solo lectura) para numerar el comprobante y el PDF no lleva marca de prueba; la sesión permanece abierta para editar o cancelar. Las opciones 1 y 2 sí guardan registros reales.
 
 ### 1. Crear Web Service
 

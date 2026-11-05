@@ -223,19 +223,44 @@ class FlujoProyectos(unittest.TestCase):
         self.assertEqual(main.user_states["1"]["destino"].gestion, "2025")
         self.assertEqual(self.saldo.call_args.kwargs["destino"].item_id, "excel-y")
 
-    def test_solo_pdf_desde_inicio_no_consulta_destinos_saldo_ni_escribe(self):
+    def test_solo_pdf_desde_inicio_pide_proyecto_consulta_su_excel_y_no_escribe(self):
         main.user_states.clear()
         self.enviar("/solo_pdf")
         self.enviar(foto=True)
-        self.destinos.assert_not_called()
-        self.saldo.assert_not_called()
+        self.assertEqual(main.user_states["1"]["step"], "elegir_proyecto")
+        self.assertTrue(main.user_states["1"]["modo_solo_pdf"])
+        self.assertNotIn("/solo_pdf", self.mensajes.call_args.args[1])
+        self.enviar("Proyecto Y")
+        destino = main.user_states["1"]["destino"]
+        self.assertEqual(destino.proyecto_id, "y")
+        self.assertTrue(main.user_states["1"]["modo_solo_pdf"])
         main.user_states["1"].update(step="confirmar", datos_procesados=datos_validos())
         self.enviar("1")
         self.guardar.assert_not_called()
-        with patch.object(main, "enviar_comprobante_pdf") as pdf:
+        self.saldo.reset_mock()
+        with patch.object(main, "enviar_comprobante_pdf") as pdf, patch.object(servicios, "calcular_codigo_y_nro", return_value=("O16102601", 1)) as calcular:
             self.enviar("5")
             pdf.assert_called_once()
+        # Numeración y saldo salen del Excel del proyecto elegido; el PDF lleva proyecto y gestión.
+        self.assertEqual(self.saldo.call_args.kwargs["destino"], destino)
+        self.assertEqual(calcular.call_args.kwargs["destino"], destino)
+        datos = pdf.call_args.args[2]
+        self.assertEqual((datos["proyecto"], datos["gestion"]), ("Proyecto Y", "2025"))
+        self.guardar.assert_not_called()
         self.validar.assert_not_called()
+
+    def test_en_solo_pdf_se_puede_cambiar_de_proyecto_sin_salir_del_modo(self):
+        main.user_states["1"]["modo_solo_pdf"] = True
+        main.mostrar_resumen_y_opciones("1")
+        self.assertIn("6) Cambiar de proyecto", self.mensajes.call_args.args[1])
+        self.enviar("6")
+        self.enviar("2")
+        self.assertEqual(main.user_states["1"]["destino"].proyecto_id, "y")
+        self.assertTrue(main.user_states["1"]["modo_solo_pdf"])
+
+    def test_resumen_indica_proyecto_actual(self):
+        main.mostrar_resumen_y_opciones("1")
+        self.assertIn("Proyecto:</b> Proyecto X", self.mensajes.call_args.args[1])
 
     def test_cambio_de_gestion_impide_guardar_sin_perder_datos(self):
         self.validar.side_effect = ErrorCatalogo("Cambió la gestión")
@@ -255,7 +280,7 @@ class FlujoProyectos(unittest.TestCase):
         self.enviar("Hola", chat_id=-100)
         self.assertIn("por privado", self.mensajes.call_args.args[1])
 
-    def test_un_proyecto_se_elige_automaticamente_y_cero_permisos_permite_pdf(self):
+    def test_un_proyecto_se_elige_automaticamente_y_cero_permisos_no_permite_continuar(self):
         for destinos in ([self.catalogo.destinos_usuario(1)[0]], []):
             with self.subTest(destinos=destinos):
                 main.user_states.clear()
@@ -267,9 +292,10 @@ class FlujoProyectos(unittest.TestCase):
                     self.assertEqual(main.user_states["1"]["destino"], destinos[0])
                     self.saldo.assert_called_once()
                 else:
+                    # Sin proyecto no hay Excel del cual tomar el número: ni siquiera el PDF avanza.
                     self.saldo.assert_not_called()
-                    self.enviar("/solo_pdf")
-                    self.assertTrue(main.user_states["1"]["modo_solo_pdf"])
+                    self.assertEqual(main.user_states["1"]["step"], "elegir_proyecto")
+                    self.assertIn("proyecto habilitado", self.mensajes.call_args.args[1])
 
     def test_seleccion_numerica_no_cambia_proyecto_si_se_reordena_catalogo(self):
         main.user_states.clear()

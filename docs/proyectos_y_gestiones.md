@@ -137,8 +137,8 @@ Si ya existe, consérvala. Formatea `telegram_id` como **Texto** antes de pegar 
 
 El ID viene de `/mi_id`, no del teléfono, del usuario `@nombre` ni de Microsoft.
 `nombre` solo sirve para reconocer a la persona. Sin esta habilitación no se puede
-usar el bot, tampoco para PDF. Una persona habilitada puede generar solo PDF sin
-tener acceso a un proyecto contable.
+usar el bot, tampoco para PDF. Para generar el PDF también se necesita un proyecto
+habilitado: de su Excel sale el número de operación.
 
 ### Tabla PROYECTOS
 
@@ -388,12 +388,11 @@ pero no certifican permisos reales, calidad del OCR ni el funcionamiento de fór
   destino y verifica fórmulas/permisos en pruebas. Luego cambia `gestion_actual`
   a `2027`, por ejemplo, en PROYECTOS. Conserva las hojas y destinos históricos.
 - **Baja:** cambia `activo` en la persona, proyecto o permiso correspondiente.
-- **Solo PDF:** una persona globalmente habilitada envía `/solo_pdf` **antes** de
-  la foto. No requiere un proyecto ni acceso del bot al archivo contable. Sí requiere
-  la lectura del catálogo de usuarios y el servicio de IA. En el resumen se usa 5.
-  El PDF conserva la marca de prueba y no se convierte aquí en un nuevo formato de
-  informe de gastos por proyecto. Para registrar ese comprobante después, debe
-  cancelar y enviar de nuevo la foto escogiendo el proyecto.
+- **Solo PDF:** una persona envía `/solo_pdf` **antes** de la foto. Elige proyecto como
+  siempre y el bot lee (solo lectura) el Excel de ese proyecto para poner en el PDF el
+  código, el número de operación y el saldo. En el resumen se usa 5; el PDF no lleva
+  marca de prueba. No se escribe nada: el número queda libre. Para registrar después el
+  mismo comprobante basta la opción 7 («Salir de solo PDF») y luego 1 o 2.
 
 El catálogo se conserva hasta **dos minutos en memoria** para reducir consultas.
 Un cambio puede tardar ese tiempo en aparecer en la selección. Justo antes de guardar,

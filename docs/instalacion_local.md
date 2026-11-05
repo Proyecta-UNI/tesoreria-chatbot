@@ -105,7 +105,7 @@ Antes de probar registros, configura la tabla de usuarios siguiendo [Control de 
 
 Ahora puedes enviar fotos o mensajes a tu bot desde Telegram y el servidor local procesará las solicitudes en tiempo real.
 
-Para probar sin insertar registros en Excel, elige **5) Generar PDF sin registrar en Excel** en el resumen. Si la consulta inicial de saldo falla o la tabla está vacía, usa `/solo_pdf` para continuar sin saldo inicial. El PDF lleva un aviso de prueba; puedes editar los datos o terminar con `/cancelar`. Las opciones 1 y 2 sí guardan en la tabla configurada, incluso cuando el servidor corre localmente.
+Para generar el PDF sin insertar registros en Excel, elige **5) Generar PDF sin registrar en Excel** en el resumen. El bot consulta Excel (solo lectura) para numerar el comprobante; el PDF no lleva marca de prueba. Puedes editar los datos o terminar con `/cancelar`. Las opciones 1 y 2 sí guardan en la tabla configurada, incluso cuando el servidor corre localmente.
 
 ### Modelos de IA configurables
 

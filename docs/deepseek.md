@@ -48,9 +48,9 @@ Consulta las tarifas actuales antes de recargar, pues pueden cambiar.
 2. Confirma que el modelo de visión admite imágenes y que hay saldo disponible.
 3. Envía un comprobante conocido. Comprueba fecha, monto, clasificación y nombres.
 4. Usa primero **5) Generar PDF sin registrar en Excel**. Revisa foto y datos.
-   También puedes iniciar con `/solo_pdf` antes de la foto; ese recorrido bloquea
-   el guardado, incluso en modo tradicional. Para registrar luego ese comprobante,
-   cancela y envía la foto como una operación nueva.
+   También puedes iniciar con `/solo_pdf` antes de la foto; ese recorrido oculta
+   el guardado hasta que uses la opción 7 del resumen. Igual consulta Excel (solo
+   lectura) para numerar el PDF.
 5. Prueba una escritura en un archivo de pruebas, verifica la fila y sus fórmulas.
 6. Revisa consumo y tiempo reales. Las pruebas locales simulan la API; no certifican
    disponibilidad, precisión ni costo de un modelo remoto.

@@ -201,31 +201,99 @@ class FlujoRegistro(unittest.TestCase):
         self.guardar.assert_called_once()
         self.assertNotIn("1", main.user_states)
 
-    def test_solo_pdf_no_consulta_ni_escribe_excel(self):
+    def test_solo_pdf_consulta_excel_para_numerar_pero_no_escribe(self):
         originales = main.user_states["1"]["datos_procesados"].copy()
-        with patch.object(main, "enviar_comprobante_pdf") as pdf:
+        with patch.object(main, "enviar_comprobante_pdf") as pdf, patch.object(servicios, "calcular_codigo_y_nro", return_value=("O16102607", 7)) as calcular:
             self.enviar("5")
-        self.saldo.assert_not_called()
+        self.saldo.assert_called_once()
+        calcular.assert_called_once()
+        self.assertTrue(calcular.call_args.kwargs["estricto"])
         self.guardar.assert_not_called()
         datos = pdf.call_args.args[2]
-        self.assertTrue(datos["solo_pdf"])
-        self.assertTrue(datos["codigo"].startswith("PRUEBA_"))
+        self.assertEqual(datos["codigo"], "O16102607")
+        self.assertEqual(datos["nro_operacion_dia"], "7")
         self.assertEqual(datos["egreso_final"], 25.5)
-        self.assertEqual(datos["saldo"], "No calculado (prueba)")
+        self.assertEqual(datos["saldo"], "74.50")
+        self.assertNotIn("solo_pdf", datos)
         self.assertEqual(main.user_states["1"]["datos_procesados"], originales)
+        for llamada in self.mensajes.call_args_list:
+            self.assertNotIn("prueba", llamada.args[1].lower())
+        self.assertIn("O16102607", self.mensajes.call_args.args[1])
+        self.assertIn("no se registró en Excel", self.mensajes.call_args.args[1])
+
+    def test_solo_pdf_no_genera_pdf_si_no_puede_consultar_excel(self):
+        for falla in ("saldo", "numeracion"):
+            with self.subTest(falla=falla), patch.object(main, "enviar_comprobante_pdf") as pdf:
+                self.saldo.side_effect = servicios.ErrorConsultaSaldo() if falla == "saldo" else None
+                numeracion = servicios.ErrorConsultaSaldo() if falla == "numeracion" else None
+                with patch.object(servicios, "calcular_codigo_y_nro", side_effect=numeracion, return_value=("O16102601", 1)):
+                    self.enviar("5")
+                pdf.assert_not_called()
+                self.guardar.assert_not_called()
+                self.assertEqual(main.user_states["1"]["step"], "confirmar")
+                self.assertIn("número de operación", self.mensajes.call_args.args[1])
+
+    def test_numeracion_estricta_no_asume_numero_uno_si_falla_la_lectura(self):
+        with patch.object(servicios, "obtener_token_ms", return_value="token"), patch.object(servicios.requests, "get", side_effect=TimeoutError()):
+            self.assertEqual(servicios.calcular_codigo_y_nro("16/10/2026")[1], 1)  # comportamiento histórico
+            with self.assertRaises(servicios.ErrorConsultaSaldo):
+                servicios.calcular_codigo_y_nro("16/10/2026", estricto=True)
+            with self.assertRaises(servicios.ErrorConsultaSaldo):
+                servicios.preparar_datos_pdf(datos_validos(), 100)
+        with patch.object(servicios, "obtener_token_ms", side_effect=RuntimeError()), self.assertRaises(servicios.ErrorConsultaSaldo):
+            servicios.preparar_datos_pdf(datos_validos(), 100)
+
+    def test_preparar_datos_pdf_no_escribe_ni_modifica_y_calcula_igual_que_guardar(self):
+        for clasificacion, saldo in (("Ingreso", "125.50"), ("Egreso", "74.50")):
+            with self.subTest(clasificacion=clasificacion), patch.object(servicios, "calcular_codigo_y_nro", return_value=("O16102603", 3)), patch.object(servicios.requests, "post") as post:
+                originales = datos_validos(ing_eg=clasificacion)
+                copia = originales.copy()
+                resultado = servicios.preparar_datos_pdf(originales, 100)
+                post.assert_not_called()
+                self.assertEqual(originales, copia)
+                self.assertEqual((resultado["codigo"], resultado["nro_operacion_dia"], resultado["saldo"]), ("O16102603", "3", saldo))
+        with patch.object(servicios, "calcular_codigo_y_nro", return_value=("O16102603", 3)):
+            self.assertEqual(servicios.preparar_datos_pdf(datos_validos(), None)["saldo"], "No disponible")
 
     def test_modo_pdf_desde_inicio_no_habilita_guardado_en_destino_tradicional(self):
         main.user_states.clear()
         self.enviar("/solo_pdf")
         self.enviar(foto=True)
-        self.saldo.assert_not_called()
+        self.saldo.assert_called_once()  # también en solo PDF se consulta Excel para numerar
+        self.assertTrue(main.user_states["1"]["modo_solo_pdf"])
         main.user_states["1"].update(step="confirmar", datos_procesados=datos_validos())
         self.enviar("1")
         self.guardar.assert_not_called()
-        self.assertIn("solo para PDF", self.mensajes.call_args.args[1])
+        self.assertIn("modo solo PDF", self.mensajes.call_args.args[1])
+
+    def test_resumen_en_solo_pdf_oculta_1_y_2_y_ofrece_salir_con_7(self):
+        main.user_states["1"]["modo_solo_pdf"] = True
+        main.mostrar_resumen_y_opciones("1")
+        resumen = self.mensajes.call_args.args[1]
+        self.assertNotIn("1) Registrar", resumen)
+        self.assertNotIn("2) Registrar", resumen)
+        self.assertIn("5) Generar PDF", resumen)
+        self.assertIn("7) Salir de solo PDF", resumen)
+        self.assertIn("Modo solo PDF", resumen)
+        self.assertNotIn("prueba", resumen.lower())
+        main.user_states["1"]["modo_solo_pdf"] = False
+        main.mostrar_resumen_y_opciones("1")
+        self.assertIn("1) Registrar", self.mensajes.call_args.args[1])
+        self.assertNotIn("7)", self.mensajes.call_args.args[1])
+
+    def test_opcion_7_sale_de_solo_pdf_y_permite_registrar(self):
+        main.user_states["1"]["modo_solo_pdf"] = True
+        self.enviar("1")
+        self.guardar.assert_not_called()
+        self.enviar("7")
+        self.assertFalse(main.user_states["1"]["modo_solo_pdf"])
+        self.assertIn("1) Registrar", self.mensajes.call_args.args[1])
+        self.enviar("1")
+        self.guardar.assert_called_once()
+        self.enviar("7")  # fuera de solo PDF, 7 no es una opción
 
     def test_fallo_solo_pdf_conserva_datos_para_reintentar(self):
-        with patch.object(main, "enviar_comprobante_pdf", side_effect=RuntimeError()):
+        with patch.object(main, "enviar_comprobante_pdf", side_effect=RuntimeError()), patch.object(servicios, "calcular_codigo_y_nro", return_value=("O16102601", 1)):
             self.enviar("5")
         self.guardar.assert_not_called()
         self.assertEqual(main.user_states["1"]["step"], "confirmar")
@@ -245,20 +313,20 @@ class FlujoRegistro(unittest.TestCase):
 
         self.assertIn("Recibido", self.mensajes.call_args.args[1])
 
-    def test_solo_pdf_valida_datos(self):
+    def test_solo_pdf_valida_datos_antes_de_consultar_excel(self):
         main.user_states["1"]["datos_procesados"]["ing_eg"] = "No determinado"
         with patch.object(main, "enviar_comprobante_pdf") as pdf:
             self.enviar("5")
         pdf.assert_not_called()
+        self.saldo.assert_not_called()
         self.guardar.assert_not_called()
 
-    def test_continuar_sin_saldo_para_probar(self):
+    def test_solo_pdf_no_permite_omitir_la_consulta_de_saldo(self):
         for paso in ("consultar_saldo", "pedir_saldo_base"):
             with self.subTest(paso=paso):
                 main.user_states["1"] = dict(step=paso, caption="Materiales para el proyecto", file_id="foto")
                 self.enviar("/solo_pdf")
-                self.assertEqual(main.user_states["1"]["step"], "esperar_lectura")
-        self.saldo.assert_not_called()
+                self.assertEqual(main.user_states["1"]["step"], paso)
         self.guardar.assert_not_called()
 
     def test_guardar_despues_de_prueba_pide_saldo_si_excel_esta_vacio(self):
@@ -270,12 +338,6 @@ class FlujoRegistro(unittest.TestCase):
         self.enviar("100")
         self.assertEqual(main.user_states["1"]["step"], "confirmar")
         self.assertEqual(main.user_states["1"]["saldo_previo"], 100)
-
-    def test_volver_a_solo_pdf_conserva_datos_ya_procesados(self):
-        main.user_states["1"]["step"] = "pedir_saldo_base"
-        self.enviar("/solo_pdf")
-        self.assertEqual(main.user_states["1"]["step"], "confirmar")
-        self.assertEqual(main.user_states["1"]["datos_procesados"], datos_validos())
 
     def test_escritura_incierta_no_se_repite(self):
         self.guardar.side_effect = TimeoutError()
@@ -499,7 +561,7 @@ class AccesoToribio(unittest.TestCase):
 
 
 class PlantillaPDF(unittest.TestCase):
-    def test_marca_de_prueba_solo_en_exportaciones_sin_registro(self):
+    def test_el_pdf_no_lleva_marca_de_prueba_ni_en_solo_pdf(self):
         fpdf = Mock()
         with patch.dict(sys.modules, {"fpdf": types.SimpleNamespace(FPDF=fpdf)}):
             spec = importlib.util.spec_from_file_location("generador_pdf_prueba", RAIZ / "generador_pdf.py")
@@ -509,7 +571,7 @@ class PlantillaPDF(unittest.TestCase):
             with self.subTest(prueba=prueba):
                 generador.generar_comprobante_pdf({**datos_validos(), "solo_pdf": prueba}, "ignorado.pdf")
                 html = fpdf.return_value.write_html.call_args.args[0]
-                self.assertEqual("PRUEBA - SIN REGISTRO EN EXCEL" in html, prueba)
+                self.assertNotIn("PRUEBA", html.upper())
                 self.assertNotIn("{{aviso_prueba}}", html)
                 self.assertNotIn("{{proyecto_gestion}}", html)
                 self.assertNotIn("<strong>Proyecto:</strong>", html)
