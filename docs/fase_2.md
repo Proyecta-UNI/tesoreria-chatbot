@@ -12,7 +12,7 @@ una decisión definitiva sobre ese segundo canal.
 | Un archivo Excel por proyecto, con una hoja por gestión | Implementado; pendiente de configurar y probar con los archivos reales. |
 | Catálogo central de usuarios, permisos y destinos en carpetas distintas | Implementado; ejemplos XLSX y procedimiento disponibles. |
 | Gestión actual definida manualmente por el administrador | Implementado mediante gestion_actual. |
-| Generar PDF sin registrar movimientos en Excel | Implementado; conserva la marca de prueba. |
+| Generar PDF sin registrar movimientos en Excel | Implementado; consulta Excel (solo lectura) para numerar y no lleva marca de prueba. |
 | DeepSeek como proveedor opcional de IA | Implementado; pendiente de verificar clave, precisión y consumo reales. |
 | Protección del webhook y deduplicación de Telegram | Implementado; deduplicación temporal de un solo proceso. |
 | Segundo canal por WhatsApp | En evaluación; sin implementación, cuenta ni número configurados en esta rama. |

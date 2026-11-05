@@ -101,7 +101,8 @@ class WebhookEventos(unittest.TestCase):
         self.assertEqual(main.user_states["1"]["file_id"], "otra-foto")
 
     def test_pdf_reenviado_no_genera_segundo_documento(self):
-        with patch.object(main, "enviar_comprobante_pdf") as pdf:
+        datos_pdf = {**datos_validos(), "codigo": "O16102601"}
+        with patch.object(main, "enviar_comprobante_pdf") as pdf, patch.object(main, "preparar_datos_pdf", return_value=datos_pdf):
             self.enviar("5", update_id=40)
             self.enviar("5", update_id=40)
         pdf.assert_called_once()
