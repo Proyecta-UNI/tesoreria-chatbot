@@ -46,7 +46,7 @@ Todos los cambios están cubiertos por pruebas (`python -m unittest discover -s 
    EXCEL`, el código `PRUEBA_…` y el mensaje «PDF de prueba». La opción 5 consulta Excel en solo
    lectura (`preparar_datos_pdf`, con numeración estricta que no asume el número 1 si falla la
    lectura) y el PDF lleva el código, el número de operación y el saldo reales; no escribe nada. Si
-   Excel no responde, no se genera el PDF. `/solo_pdf` ya no omite la selección de proyecto ni la
+   Excel no responde o la columna SALDO no tiene un número válido, no se genera el PDF y Toribio lo explica; si la tabla no tiene saldo todavía, pide el saldo base. `/solo_pdf` ya no omite la selección de proyecto ni la
    consulta de saldo.
 7. **Salir del modo solo PDF y ver el proyecto actual.** El resumen muestra proyecto/gestión y,
    en solo PDF, la opción **7) Salir de solo PDF**; `/proyectos` marca con ✅ el proyecto actual.

@@ -124,8 +124,13 @@ class ConsultaSaldo(unittest.TestCase):
 
     def test_registros_sin_saldo_valido_no_son_tabla_vacia(self):
         for saldo in (None, "error", "nan", "inf"):
-            with self.subTest(saldo=saldo), self.assertRaises(servicios.ErrorConsultaSaldo):
+            with self.subTest(saldo=saldo), self.assertRaises(servicios.ErrorSaldoInvalido):
                 self.consultar([{"values": [["codigo"] + [None] * 11 + [saldo]]}])
+        # Un fallo de red u otro no se confunde con "la celda de saldo no es válida".
+        with patch.object(servicios, "obtener_token_ms", return_value="token"), patch.object(servicios.requests, "get", side_effect=TimeoutError()):
+            with self.assertRaises(servicios.ErrorConsultaSaldo) as error:
+                servicios.obtener_saldo_actual()
+        self.assertNotIsInstance(error.exception, servicios.ErrorSaldoInvalido)
 
     def test_error_de_autenticacion(self):
         with patch.object(servicios, "obtener_token_ms", return_value=None), self.assertRaises(servicios.ErrorConsultaSaldo):
@@ -221,6 +226,40 @@ class FlujoRegistro(unittest.TestCase):
         self.assertIn("O16102607", self.mensajes.call_args.args[1])
         self.assertIn("no se registró en Excel", self.mensajes.call_args.args[1])
 
+    def test_sin_saldo_en_excel_ni_base_pregunta_el_saldo_inicial_con_voz_de_toribio(self):
+        del main.user_states["1"]["saldo_previo"]
+        self.saldo.return_value = None
+        with patch.object(main, "enviar_comprobante_pdf") as pdf, patch.object(servicios, "calcular_codigo_y_nro", return_value=("O16102601", 1)):
+            self.enviar("5")
+            pdf.assert_not_called()
+            self.assertEqual(main.user_states["1"]["step"], "pedir_saldo_base")
+            mensaje = self.mensajes.call_args.args[1]
+            self.assertIn("SALDO", mensaje)
+            self.assertIn("Muu", mensaje)
+            self.assertIn("Saldo Base", mensaje)
+            self.assertNotIn("No disponible", mensaje)
+            self.enviar("100")
+            self.assertEqual(main.user_states["1"]["step"], "confirmar")
+            self.enviar("5")
+            self.assertEqual(pdf.call_args.args[2]["saldo"], "74.50")
+        self.guardar.assert_not_called()
+
+    def test_saldo_vacio_en_excel_usa_el_saldo_base_ya_indicado(self):
+        self.saldo.return_value = None  # setUp ya trae saldo_previo=100
+        with patch.object(main, "enviar_comprobante_pdf") as pdf, patch.object(servicios, "calcular_codigo_y_nro", return_value=("O16102601", 1)):
+            self.enviar("5")
+        self.assertEqual(pdf.call_args.args[2]["saldo"], "74.50")
+
+    def test_columna_saldo_sin_numeros_validos_se_avisa_y_no_genera_pdf(self):
+        self.saldo.side_effect = servicios.ErrorSaldoInvalido()
+        with patch.object(main, "enviar_comprobante_pdf") as pdf:
+            self.enviar("5")
+        pdf.assert_not_called()
+        self.assertEqual(main.user_states["1"]["step"], "confirmar")
+        mensaje = self.mensajes.call_args.args[1]
+        self.assertIn("columna <b>SALDO</b>", mensaje)
+        self.assertIn("Chispas", mensaje)
+
     def test_solo_pdf_no_genera_pdf_si_no_puede_consultar_excel(self):
         for falla in ("saldo", "numeracion"):
             with self.subTest(falla=falla), patch.object(main, "enviar_comprobante_pdf") as pdf:
@@ -252,8 +291,8 @@ class FlujoRegistro(unittest.TestCase):
                 post.assert_not_called()
                 self.assertEqual(originales, copia)
                 self.assertEqual((resultado["codigo"], resultado["nro_operacion_dia"], resultado["saldo"]), ("O16102603", "3", saldo))
-        with patch.object(servicios, "calcular_codigo_y_nro", return_value=("O16102603", 3)):
-            self.assertEqual(servicios.preparar_datos_pdf(datos_validos(), None)["saldo"], "No disponible")
+        with patch.object(servicios, "calcular_codigo_y_nro", return_value=("O16102603", 3)), self.assertRaises(servicios.ErrorConsultaSaldo):
+            servicios.preparar_datos_pdf(datos_validos(), None)  # nunca un PDF con saldo inventado
 
     def test_modo_pdf_desde_inicio_no_habilita_guardado_en_destino_tradicional(self):
         main.user_states.clear()

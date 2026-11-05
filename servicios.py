@@ -293,6 +293,10 @@ class ErrorConsultaSaldo(Exception):
     """No fue posible consultar un saldo confiable en Excel."""
 
 
+class ErrorSaldoInvalido(ErrorConsultaSaldo):
+    """Hay movimientos en Excel, pero ninguna celda de SALDO trae un número válido."""
+
+
 class ErrorValidacionOperacion(ValueError):
     """La operación requiere corrección antes de registrarse."""
 
@@ -351,8 +355,11 @@ def obtener_saldo_actual(destino=None):
                         continue
                         
         if any(any(valor not in (None, "", "-") for valor in fila.get("values", [[]])[0]) for fila in filas):
-            raise ErrorConsultaSaldo("Hay registros en Excel, pero no un saldo válido.")
+            raise ErrorSaldoInvalido("Hay registros en Excel, pero no un saldo válido.")
         return None # Solo filas vacías: todavía no hay un saldo inicial
+    except ErrorSaldoInvalido:
+        print("Excepción obteniendo saldo actual: Hay registros en Excel, pero no un saldo válido.")
+        raise
     except Exception as e:
         print(f"Excepción obteniendo saldo actual: {ocultar_secretos(e)}")
         raise ErrorConsultaSaldo("No se pudo consultar el saldo de Excel.") from e
@@ -605,9 +612,9 @@ def preparar_datos_pdf(datos: dict, saldo_previo, formato_usa: bool = False, des
     ingreso_val = monto_float if clasificacion == "ingreso" else 0
     egreso_val = monto_float if clasificacion == "egreso" else 0
     if saldo_previo is None:
-        saldo = "No disponible"
-    else:
-        saldo = f"{saldo_previo + ingreso_val - egreso_val:.2f}"
+        # El PDF nunca sale con un saldo inventado ni con un marcador de posición.
+        raise ErrorConsultaSaldo("No hay saldo previo para calcular el saldo del comprobante.")
+    saldo = f"{saldo_previo + ingreso_val - egreso_val:.2f}"
     datos.update(codigo=codigo, nro_operacion_dia=str(nro_operacion_dia),
                  ingreso_final=ingreso_val, egreso_final=egreso_val, saldo=saldo)
     return datos

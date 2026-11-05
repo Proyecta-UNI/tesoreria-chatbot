@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from servicios import obtener_saldo_actual, extraer_datos_recibo_llm, guardar_en_excel, preparar_datos_pdf
-from servicios import ErrorConsultaSaldo, ErrorValidacionOperacion, validar_operacion
+from servicios import ErrorConsultaSaldo, ErrorSaldoInvalido, ErrorValidacionOperacion, validar_operacion
 from servicios import usuario_autorizado
 from servicios import MS_CONFIG_ITEM_ID, obtener_destinos_usuario, validar_destino_actual
 from catalogo import ErrorCatalogo
@@ -570,11 +570,18 @@ def procesar_actualizacion(data):
             # El PDF lleva el código y el número de operación que le corresponden en Excel,
             # así que se consulta (solo lectura) igual que al guardar; no se escribe nada.
             try:
-                saldo_actual = obtener_saldo_actual(**extra)
+                saldo_actual = obtener_saldo_actual(**extra)  # lee la columna SALDO de Excel
                 saldo_base = saldo_actual if saldo_actual is not None else state.get("saldo_previo")
+                if saldo_base is None:
+                    state["step"] = "pedir_saldo_base"
+                    enviar_mensaje(chat_id, "¡Muuu! 🐮 Revisé la celda de <b>SALDO</b> en el Excel y no encontré ninguna: parece que este será el primer movimiento de la tabla. Sin un saldo de partida no puedo calcular el que va en tu comprobante, y prefiero no inventármelo.\n\nDime cuál es el <b>Saldo Base / Inicial</b> en caja (ej. 1500.50) y luego vuelves a elegir <b>5</b> para sacar tu PDF. ¡Tus datos siguen aquí conmigo!")
+                    return {"status": "ok"}
                 datos_pdf = preparar_datos_pdf(state["datos_procesados"], saldo_base, state.get("fecha_usa", False), **extra)
             except ErrorValidacionOperacion as e:
                 enviar_mensaje(chat_id, f"No pude generar el PDF. {e} Usa la opción 3 para corregir los datos.")
+                return {"status": "ok"}
+            except ErrorSaldoInvalido:
+                enviar_mensaje(chat_id, "¡Chispas! 🐮 Encontré movimientos en el Excel, pero en la columna <b>SALDO</b> no hay ningún número válido (¿celdas vacías o una fórmula con error?). Sin ese saldo no puedo calcular el de tu comprobante y no quiero inventármelo, así que todavía no generé el PDF.\n\nRevisa esa columna en el Excel y escribe <b>5</b> para intentarlo otra vez. ¡Tus datos siguen aquí conmigo!")
                 return {"status": "ok"}
             except (ErrorConsultaSaldo, ErrorCatalogo):
                 enviar_mensaje(chat_id, "No pude consultar Excel para obtener el número de operación, así que no generé el PDF (así evito darte un número equivocado). Tus datos siguen disponibles: escribe 5 para reintentar.")
