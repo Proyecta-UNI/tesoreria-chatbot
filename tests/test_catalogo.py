@@ -283,6 +283,25 @@ class FlujoProyectos(unittest.TestCase):
         self.enviar("1")  # Ahora responde a la lista nueva, 1=Y.
         self.assertEqual(main.user_states["1"]["destino"].proyecto_id, "y")
 
+    def test_cambiar_proyecto_en_confirmacion(self):
+        main.user_states.clear()
+        self.enviar(foto=True)
+        self.enviar("1")
+        self.assertEqual(main.user_states["1"]["destino"].proyecto_id, "x")
+        main.user_states["1"].update(step="confirmar", datos_procesados=base.datos_validos())
+        self.enviar("6")
+        self.assertEqual(main.user_states["1"]["step"], "cambiar_proyecto")
+        self.enviar("2")
+        self.assertEqual(main.user_states["1"]["step"], "confirmar")
+        self.assertEqual(main.user_states["1"]["destino"].proyecto_id, "y")
+
+    def test_comando_proyectos_muestra_destinos_habilitados(self):
+        main.user_states.clear()
+        self.enviar("/proyectos")
+        self.assertIn("Tus proyectos habilitados", self.mensajes.call_args.args[1])
+        self.assertIn("Proyecto X", self.mensajes.call_args.args[1])
+
 
 if __name__ == "__main__":
     unittest.main()
+

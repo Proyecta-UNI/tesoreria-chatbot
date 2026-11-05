@@ -54,6 +54,7 @@ def mostrar_resumen_y_opciones(chat_id):
                  if destino else "")
     opciones_registro = ("" if state.get("modo_solo_pdf") or (MS_CONFIG_ITEM_ID and not destino) else
                         "1) Registrar movimiento en Excel\n2) Registrar movimiento en Excel y generar PDF\n")
+    opcion_cambiar_proyecto = "6) Cambiar de proyecto\n" if MS_CONFIG_ITEM_ID and not state.get("modo_solo_pdf") else ""
     resumen = (
         f"🧾 <b>Resumen de la operación:</b>\n\n"
         f"{ubicacion}"
@@ -70,6 +71,7 @@ def mostrar_resumen_y_opciones(chat_id):
         f"3) Editar datos\n"
         f"4) Alternar formato de fecha (PE ↔ USA)\n"
         f"5) Generar PDF sin registrar en Excel\n"
+        f"{opcion_cambiar_proyecto}"
         f"O envía /cancelar para abortar"
     )
     enviar_mensaje(chat_id, resumen)
@@ -264,6 +266,20 @@ def procesar_actualizacion(data):
     if comando == "/mi_id" and type(usuario_id) is int and usuario_id > 0 and not remitente.get("is_bot", False):
         enviar_mensaje(chat_id, f"Tu identificador de Telegram es: <code>{usuario_id}</code>\nCompártelo con el equipo de tesorería para que puedan darte acceso. ¡Muu! 🐮")
         return {"status": "ok"}
+    if comando in ("/proyecto", "/proyectos") and type(usuario_id) is int and usuario_id > 0 and not remitente.get("is_bot", False):
+        if not MS_CONFIG_ITEM_ID:
+            enviar_mensaje(chat_id, "El bot está operando en modo tradicional de destino único. ¡Muu! 🐮")
+            return {"status": "ok"}
+        try:
+            destinos = obtener_destinos_usuario(usuario_id)
+            if not destinos:
+                enviar_mensaje(chat_id, "Todavía no tienes proyectos asignados en el catálogo. Pídele al equipo de tesorería que te habilite. ¡Muu! 🐮")
+            else:
+                lista = "\n".join(f"• <b>{escape(d.nombre)}</b> · gestión {escape(d.gestion)} (código: <code>{escape(d.proyecto_id)}</code>)" for d in destinos)
+                enviar_mensaje(chat_id, f"📂 <b>Tus proyectos habilitados:</b>\n\n{lista}\n\n<i>Cuando me envíes una foto, podrás elegir a cuál de ellos registrar el movimiento. ¡Muu! 🐮</i>")
+        except Exception:
+            enviar_mensaje(chat_id, "No pude consultar la lista de proyectos en este momento. Intenta de nuevo en unos minutos.")
+        return {"status": "ok"}
     if type(usuario_id) is not int or usuario_id <= 0 or remitente.get("is_bot", False) or not usuario_autorizado(usuario_id):
         enviar_mensaje(chat_id, "¡Muu! Todavía no te conozco 🐮. Pídele al equipo de tesorería que te dé acceso. Escribe /mi_id y compárteles tu identificador.\n\nSi ya te habilitaron, los cambios pueden tardar hasta 2 minutos en reflejarse. Espera ese tiempo y vuelve a escribirme. ¡Muu!")
         return {"status": "ok"}
@@ -375,6 +391,25 @@ def procesar_actualizacion(data):
             continuar_registro(chat_id)
         else:
             elegir_destino(chat_id, usuario_id, text)
+        return {"status": "ok"}
+
+    if state.get("step") == "cambiar_proyecto":
+        destinos = state.get("opciones_proyectos", ())
+        coincidencias = [d for i, d in enumerate(destinos, 1)
+                        if text.casefold() in (str(i), d.proyecto_id.casefold(), d.nombre.casefold())]
+        if len(coincidencias) == 1:
+            elegido = coincidencias[0]
+            state["destino"] = elegido
+            state["step"] = "confirmar"
+            enviar_mensaje(chat_id, f"🐮 Cambiado a <b>{escape(elegido.nombre)}</b> (gestión {escape(elegido.gestion)}).")
+            try:
+                state["saldo_previo"] = obtener_saldo_actual(destino=elegido)
+            except ErrorConsultaSaldo:
+                pass
+            mostrar_resumen_y_opciones(chat_id)
+        else:
+            opciones = "\n".join(f"{i}) {escape(d.nombre)}" for i, d in enumerate(destinos, 1))
+            enviar_mensaje(chat_id, f"No reconocí ese proyecto. Por favor escribe el número o nombre:\n\n{opciones}")
         return {"status": "ok"}
 
     if text.lower() == "/solo_pdf" and state.get("step") in ("consultar_saldo", "pedir_saldo_base"):
@@ -576,6 +611,17 @@ def procesar_actualizacion(data):
             except:
                 enviar_mensaje(chat_id, "No pude convertir la fecha. Verifica que tenga formato válido o edítala manualmente (opción 3).")
             mostrar_resumen_y_opciones(chat_id)
+        elif text in ["6", "proyecto", "proyectos", "cambiar", "cambiar proyecto"] and MS_CONFIG_ITEM_ID:
+            destinos = obtener_destinos_usuario(usuario_id)
+            if len(destinos) <= 1:
+                enviar_mensaje(chat_id, "Solo tienes un proyecto asignado en este momento. No hay otros proyectos para alternar.")
+                mostrar_resumen_y_opciones(chat_id)
+                return {"status": "ok"}
+            state["step"] = "cambiar_proyecto"
+            state["opciones_proyectos"] = tuple(destinos)
+            opciones = "\n".join(f"{i}) {escape(d.nombre)} · gestión {escape(d.gestion)}" for i, d in enumerate(destinos, 1))
+            enviar_mensaje(chat_id, f"🔄 <b>Selecciona el nuevo proyecto:</b>\n\n{opciones}\n\n<i>Escribe el número o identificador del proyecto al que deseas mover la operación:</i>")
+            return {"status": "ok"}
         else:
             enviar_mensaje(chat_id, "Por favor responde con un numerito:\n1) Registrar movimiento en Excel\n2) Registrar movimiento en Excel y generar PDF\n3) Editar\n4) Alternar formato de fecha\n5) Generar PDF sin registrar en Excel\nO escribe /cancelar si ya no quieres guardarlo.")
         return {"status": "ok"}
