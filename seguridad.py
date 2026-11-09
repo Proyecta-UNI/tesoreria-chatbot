@@ -5,7 +5,7 @@ import traceback
 
 _TOKEN_BOT = re.compile(r"bot\d{5,}:[A-Za-z0-9_-]{20,}")
 _VARIABLES_SECRETAS = ("TELEGRAM_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "MS_CLIENT_SECRET",
-                       "GROQ_API_KEY", "DEEPSEEK_API_KEY")
+                       "GROQ_API_KEY", "DEEPSEEK_API_KEY", "VOZ_API_KEY")
 
 
 def ocultar_secretos(texto):

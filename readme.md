@@ -16,15 +16,15 @@ El bot recibe fotografías de recibos, boletas o facturas, utiliza un Modelo de 
 
 ## Fase 2
 
-El trabajo de esta rama forma parte de la segunda fase del proyecto. [Consulta su alcance y estado](docs/fase_2.md): proyectos y gestiones, configuración de IA, PDF independiente y protección de Telegram. Un segundo canal por WhatsApp queda en evaluación; todavía no está implementado.
+El trabajo de esta rama forma parte de la segunda fase del proyecto. [Consulta su alcance y estado](docs/fase_2.md): proyectos, configuración de IA, PDF independiente y protección de Telegram. Un segundo canal por WhatsApp queda en evaluación; todavía no está implementado.
 
 ## Configuración de esta rama
 
-Esta rama agrega [DeepSeek opcional](docs/deepseek.md) y [proyectos y gestiones desde un Excel central](docs/proyectos_y_gestiones.md). La guía de proyectos explica el orden completo para preparar archivos, obtener IDs con Graph, configurar Render y comprobar permisos antes de activar registros. Sin `MS_CONFIG_ITEM_ID` se conserva el destino único; sin `IA_PROVEEDOR` se conserva Groq.
+Esta rama agrega [DeepSeek opcional](docs/deepseek.md) y [proyectos desde un Excel central](docs/proyectos.md). La guía de proyectos explica el orden completo para preparar archivos, obtener IDs con Graph, configurar Render y comprobar permisos antes de activar registros. Sin `MS_CONFIG_ITEM_ID` se conserva el destino único; sin `IA_PROVEEDOR` se conserva Groq.
 
-Cada proyecto tiene su propio Excel y una hoja por gestión. El administrador define `gestion_actual` (por ejemplo, `2026`); el bot nunca la cambia por calendario. Cada persona solo puede elegir sus proyectos autorizados.
+Cada proyecto tiene su propio Excel, y cada fila del catálogo es un proyecto con su propio archivo, hoja y tabla. El nombre ya trae la nomenclatura exacta del periodo (por ejemplo, `Software Week P1MP 26 1`); el bot nunca elige el periodo por calendario. Cada persona solo puede elegir sus proyectos autorizados.
 
-En [ejemplos/excel](ejemplos/excel/README.md) hay dos archivos XLSX: un catálogo de accesos/configuración y un proyecto con hojas 2025 y 2026. Su README explica los campos, datos ficticios, saldo inicial, fórmulas y conexión con Graph.
+En [ejemplos/excel](ejemplos/excel/README.md) hay dos archivos XLSX: un catálogo de accesos/configuración y un proyecto con su hoja de movimientos. Su README explica los campos, datos ficticios, saldo inicial, fórmulas y conexión con Graph.
 
 ## Alcance y costos
 
@@ -39,10 +39,12 @@ La arquitectura actual no requiere una base de datos de sesiones, colas externas
 * **Webhook Protegido:** Las solicitudes requieren el secreto compartido con Telegram antes de procesar mensajes. Configura `TELEGRAM_WEBHOOK_SECRET` y registra el mismo valor en Telegram según [la guía del webhook](docs/webhook_telegram.md).
 * **Acceso desde Excel:** Solo los IDs activos de la tabla `USUARIOS_AUTORIZADOS` pueden usar el bot. `/mi_id` es público para solicitar el alta. En modo tradicional se usa un Excel separado configurado con `MS_USUARIOS_ITEM_ID`; con proyectos, se usa el catálogo `MS_CONFIG_ITEM_ID`; [consulta la guía de configuración](docs/control_acceso.md) antes de habilitar esta versión.
 * **Procesamiento de Imágenes con IA:** Pipeline de dos pasos: (1) un modelo de visión transcribe el texto del comprobante, y (2) un modelo de texto interpreta y estructura los datos en un esquema JSON. El proveedor y sus modelos se configuran en Render o `.env`; consulta [Groq](docs/modelos_groq.md) o [DeepSeek](docs/deepseek.md). Los valores históricos de Groq no garantizan disponibilidad actual.
+* **Dictado por voz (opcional):** la persona puede contar el gasto con una nota de voz; se transcribe con Whisper en Groq y sigue el mismo camino que un texto, con la misma confirmación antes de registrar. Requiere `GROQ_API_KEY` (alcanza el plan gratuito de Groq) y se puede apagar con `VOZ_ACTIVADA=No`; consulta [la guía de voz](docs/voz.md).
 * **Flujo Conversacional Interactivo:** Sistema dinámico que permite al usuario confirmar los datos extraídos, editarlos manualmente en bloque mediante un formato estructurado con signos de interrogación (`?`) o cancelar la operación antes de registrar.
-* **Validación antes de Guardar:** El monto debe ser numérico, finito y mayor que cero; Ing/Eg debe ser Ingreso o Egreso. Los datos inválidos se conservan para corregirlos con la opción 3.
+* **Validación antes de Guardar:** El monto debe ser numérico, finito y mayor que cero; Ing/Eg debe ser Ingreso o Egreso. Los datos inválidos se conservan para corregirlos con la opción 2 (editar).
 * **Errores Diferenciados:** Una falla consultando Excel permite reintentar sin pedir un saldo inicial nuevo. Si falla el PDF después de guardar, el bot aclara que el registro ya existe y no debe repetirse.
-* **PDF sin Registro:** La opción 5, «Generar PDF sin registrar en Excel», genera el comprobante definitivo, sin marca de prueba, y no guarda nada en Excel. Consulta (solo lectura) el archivo del proyecto para poner en el PDF el código, el número de operación del día y el saldo que le corresponden; si no puede consultarlo, no genera el PDF. También puedes escribir `/solo_pdf` antes de enviar la foto: sigue pidiendo proyecto y oculta las opciones 1 y 2 hasta que uses la opción 7 («Salir de solo PDF»). Como no se registra, el número queda libre en Excel. Los datos quedan disponibles para editar o cancelar. `/proyectos` marca el proyecto actual y el modo.
+* **Confirmación en un paso:** el resumen ofrece solo dos acciones: **1) Confirmar y subir a Excel** (guarda la fila, archiva la foto original y envía el PDF de respaldo) y **2) Editar la información**. No existe el PDF sin registro (`/solo_pdf` se retiró) ni el cambio de proyecto en la confirmación: si elegiste mal, `/cancelar` y se vuelve a empezar. El encabezado del resumen indica en qué proyecto y gestión se guardará («📍 Proyecto: Software Week - Gestión: P1MP 26 1»).
+* **Evidencia en SharePoint:** al registrarse una operación, la foto original se copia sin modificar a `Finanzas/Evidencias/<Nombre del proyecto>/` en la biblioteca del Excel del proyecto, con un nombre único que nunca sobrescribe. Permite a tesorería contrastar la imagen con los montos de Excel; [detalle y permisos](docs/proyectos.md#evidencias-copia-de-la-foto-original-en-sharepoint).
 * **Asignación Correlativa:** Python calcula el número de operación del día consultando las filas de Excel y genera el código mostrado en el mensaje y el PDF. La escritura deja `CÓDIGO` y `SALDO` a las fórmulas del archivo contable; esos valores calculados por Excel no se vuelven a leer para generar el PDF.
 * **Generación Local de PDF:** Creación de comprobantes con `fpdf2` y una plantilla separada (`plantilla.html`), con la imagen original en una segunda página y archivos temporales locales durante el envío.
 * **Limpieza de Almacenamiento:** Tras generar y enviar el PDF, o si falla el proceso, se intenta borrar tanto el PDF como la imagen temporal del servidor.
@@ -58,7 +60,7 @@ La arquitectura actual no requiere una base de datos de sesiones, colas externas
 tesoreria-chatbot/
 │
 ├── main.py              # Lógica principal de FastAPI, webhooks y estados de los usuarios en Telegram.
-├── catalogo.py          # Valida proyectos, gestión actual, destinos y permisos.
+├── catalogo.py          # Valida proyectos (con su archivo, hoja y tabla) y permisos.
 ├── seguridad.py         # Oculta secretos en los registros y neutraliza fórmulas de Excel.
 ├── servicios.py         # Configuración de modelos, pipeline OCR+LLM, y operaciones CRUD en SharePoint.
 ├── generador_pdf.py     # Módulo encargado de leer el HTML, inyectar variables y compilar el PDF local.
@@ -83,4 +85,4 @@ Consulta los detalles de operación y cambios en [la documentación de integraci
 
 La documentación describe el código del repositorio; no confirma por sí sola que esa versión esté desplegada en Render. Tras instalar requirements.txt, la suite local se ejecuta con `python -m unittest discover -s tests -v` y sustituye las integraciones externas. Queda comprobar el acceso real de la aplicación a SharePoint y la recepción de Telegram después de configurar y desplegar. Microsoft documenta que las operaciones de tablas Excel utilizadas no admiten permisos de aplicación, mientras el código actual usa `client_credentials`; [la guía de Graph](docs/microsoft_graph_paso_a_paso.md) explica esta incompatibilidad y cómo diagnosticarla. Un ID obtenido en Graph Explorer no demuestra compatibilidad de la autenticación del bot.
 
-Se conservan las 13 columnas contables y los campos del PDF; cuando hay un destino seleccionado, el PDF añade el proyecto y la gestión. La opción 5 no implementa un formato nuevo de informe por proyecto ni registra un historial de PDFs. La [deduplicación de eventos por `update_id`](docs/deduplicacion_telegram.md) conserva hasta 10 000 IDs durante 24 horas en un único proceso; se pierde al reiniciar y no detecta fotos enviadas otra vez como mensajes nuevos. Las imágenes existentes se conservan.
+Se conservan las 13 columnas contables y los campos del PDF; cuando hay un destino seleccionado, el PDF añade el nombre del proyecto. El PDF no implementa un formato nuevo de informe por proyecto ni registra un historial de PDFs; el respaldo duradero es la foto archivada en SharePoint. La [deduplicación de eventos por `update_id`](docs/deduplicacion_telegram.md) conserva hasta 10 000 IDs durante 24 horas en un único proceso; se pierde al reiniciar y no detecta fotos enviadas otra vez como mensajes nuevos. Las imágenes existentes se conservan.

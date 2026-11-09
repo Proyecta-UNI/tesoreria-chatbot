@@ -29,7 +29,7 @@ pip install -r requirements.txt
 
 ### ⚙️ Paso 3: Configurar Variables de Entorno
 
-Crea un archivo `.env` en la raíz del proyecto tomando [.env.example](../.env.example) como base. El ejemplo siguiente selecciona DeepSeek con pago por consumo; para Groq consulta [su guía](modelos_groq.md). Para varios proyectos, sigue primero [la configuración de proyectos y gestiones](proyectos_y_gestiones.md), incluida la comprobación de Graph antes de completar `MS_CONFIG_ITEM_ID`:
+Crea un archivo `.env` en la raíz del proyecto tomando [.env.example](../.env.example) como base. El ejemplo siguiente selecciona DeepSeek con pago por consumo; para Groq consulta [su guía](modelos_groq.md). Para varios proyectos, sigue primero [la configuración de proyectos](proyectos.md), incluida la comprobación de Graph antes de completar `MS_CONFIG_ITEM_ID`:
 
 Obtén los valores `MS_*` siguiendo [Microsoft Graph paso a paso](microsoft_graph_paso_a_paso.md). Incluye la comprobación de la aplicación y la limitación documentada de autenticación para las tablas Excel; descubrir un ID con tu usuario no verifica el funcionamiento del bot.
 
@@ -63,7 +63,7 @@ Las sesiones se guardan únicamente en memoria. Si Render suspende o reinicia el
 
 Esta rama agrega openpyxl para leer el Excel central; instálalo mediante requirements.txt. El webhook requiere `TELEGRAM_WEBHOOK_SECRET`. Para accesos usa `MS_USUARIOS_ITEM_ID` en modo tradicional o `MS_CONFIG_ITEM_ID` en modo de proyectos, según las guías enlazadas.
 
-Para obtener el PDF sin escribir en SharePoint, envía una foto, completa los datos y elige **5) Generar PDF sin registrar en Excel** en el resumen. El bot consulta Excel (solo lectura) para numerar el comprobante y el PDF no lleva marca de prueba; la sesión permanece abierta para editar o cancelar. Las opciones 1 y 2 sí guardan registros reales.
+Envía una foto, completa los datos y elige **1) Confirmar y subir a Excel** en el resumen: guarda un registro real, envía el PDF de respaldo y, en modo de proyectos, archiva la foto original en `Finanzas/Evidencias/<Nombre del proyecto>`. **2) Editar la información** corrige los datos y `/cancelar` aborta. Ya no hay un PDF sin registro.
 
 ### 1. Crear Web Service
 
@@ -138,9 +138,9 @@ Ahora puedes enviar fotos o mensajes a tu bot desde Telegram y el servidor proce
 
 `GROQ_MODELO_VISION` y `GROQ_MODELO_TEXTO` se aplican solo con Groq y conservan los nombres históricos del código si se omiten; comprueba que sigan disponibles antes de usarlos. Se pueden cambiar sin editar código; al guardar, reinicia o despliega el servicio para aplicar la configuración. Si el nuevo modelo de visión no admite `reasoning_effort`, configura `GROQ_VISION_EXTRA_PARAMS={}`. Consulta [la guía de modelos de Groq](modelos_groq.md) para las opciones específicas.
 
-## Proyectos y gestiones
+## Proyectos
 
-[Configurar proyectos y gestiones](proyectos_y_gestiones.md) explica las cuatro tablas del catálogo, un archivo por proyecto y una hoja por gestión, el campo manual `gestion_actual`, los IDs de Graph, el diagnóstico de solo lectura y el despliegue gradual. No actives `MS_CONFIG_ITEM_ID` con un catálogo incompleto. [DeepSeek](deepseek.md) explica sus variables, saldo y pruebas sin registrar.
+[Configurar proyectos](proyectos.md) explica las tres tablas del catálogo, un archivo por proyecto con una fila por proyecto y gestión (hoja y tabla incluidas), los IDs de Graph, el diagnóstico de solo lectura y el despliegue gradual. No actives `MS_CONFIG_ITEM_ID` con un catálogo incompleto. [DeepSeek](deepseek.md) explica sus variables, saldo y pruebas sin registrar.
 
 ## Reenvíos de Telegram
 

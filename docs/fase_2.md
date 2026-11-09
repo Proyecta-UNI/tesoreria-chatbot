@@ -1,4 +1,4 @@
-# Fase 2: proyectos, gestiones y evaluación de otro canal
+# Fase 2: proyectos y evaluación de otro canal
 
 El responsable del proyecto indicó que el trabajo de esta rama forma parte de la
 fase 2 comentada con su director. Este documento recoge lo desarrollado aquí y
@@ -9,10 +9,10 @@ una decisión definitiva sobre ese segundo canal.
 
 | Componente | Estado |
 |---|---|
-| Un archivo Excel por proyecto, con una hoja por gestión | Implementado; pendiente de configurar y probar con los archivos reales. |
-| Catálogo central de usuarios, permisos y destinos en carpetas distintas | Implementado; ejemplos XLSX y procedimiento disponibles. |
-| Gestión actual definida manualmente por el administrador | Implementado mediante gestion_actual. |
-| Generar PDF sin registrar movimientos en Excel | Implementado; consulta Excel (solo lectura) para numerar y no lleva marca de prueba. |
+| Un archivo Excel por proyecto, con una hoja y tabla por gestión (cada una es una fila del catálogo) | Implementado; pendiente de configurar y probar con los archivos reales. |
+| Catálogo central de usuarios, proyectos y permisos en carpetas distintas | Implementado; ejemplos XLSX y procedimiento disponibles. |
+| Gestión definida manualmente por el administrador | Implementado: la gestión va en el nombre de cada fila de proyectos; se abre o cierra con `activo`. |
+| Generar PDF sin registrar movimientos en Excel | Retirado: todo comprobante se registra y el PDF de respaldo se envía al confirmar. |
 | DeepSeek como proveedor opcional de IA | Implementado; pendiente de verificar clave, precisión y consumo reales. |
 | Protección del webhook y deduplicación de Telegram | Implementado; deduplicación temporal de un solo proceso. |
 | Segundo canal por WhatsApp | En evaluación; sin implementación, cuenta ni número configurados en esta rama. |
@@ -25,8 +25,8 @@ estos cambios en producción.
 
 ## Documentación para configurar lo desarrollado
 
-- [Proyectos y gestiones](proyectos_y_gestiones.md): organización de archivos,
-  permisos, gestión actual y pasos de configuración y diagnóstico.
+- [Configurar proyectos](proyectos.md): organización de archivos,
+  permisos, gestiones y pasos de configuración y diagnóstico.
 - [Excel de ejemplo](../ejemplos/excel/README.md): catálogo y archivo de proyecto
   con campos esperados, datos ficticios y fórmulas propuestas.
 - [Microsoft Graph](microsoft_graph_paso_a_paso.md): obtener IDs y comprobar la

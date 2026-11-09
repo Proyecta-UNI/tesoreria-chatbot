@@ -1,6 +1,6 @@
 # Acceso a Toribio desde Excel
 
-**Modo de varios proyectos:** si completas `MS_CONFIG_ITEM_ID`, la lista de personas se lee del archivo central junto con sus permisos por proyecto; `MS_USUARIOS_ITEM_ID` deja de utilizarse. Sigue [proyectos y gestiones](proyectos_y_gestiones.md). Las instrucciones siguientes corresponden al modo tradicional de un destino. Ambos modos mantienen `/mi_id` público y requieren habilitación global también para generar solo PDF.
+**Modo de varios proyectos:** si completas `MS_CONFIG_ITEM_ID`, la lista de personas se lee del archivo central junto con sus permisos por proyecto; `MS_USUARIOS_ITEM_ID` deja de utilizarse. Sigue [configurar proyectos](proyectos.md). Las instrucciones siguientes corresponden al modo tradicional de un destino. Ambos modos mantienen `/mi_id` público y requieren habilitación global también para generar solo PDF.
 
 La lista de personas habilitadas se administra en **otro archivo Excel de SharePoint**, separado del registro contable. Se agrega una variable de entorno en Render: `MS_USUARIOS_ITEM_ID`, con el identificador del archivo de usuarios. Se reutilizan las credenciales, el sitio y la biblioteca (`MS_SITE_ID` y `MS_DRIVE_ID`) existentes, sin servicios de pago adicionales. `MS_ITEM_ID` sigue apuntando exclusivamente al archivo contable.
 

@@ -29,7 +29,7 @@ pip install -r requirements.txt
 
 ### ⚙️ Paso 3: Configurar Variables de Entorno
 
-Crea un archivo `.env` en la raíz del proyecto tomando [.env.example](../.env.example) como base. El ejemplo siguiente selecciona DeepSeek con pago por consumo; para Groq consulta [su guía](modelos_groq.md). Para varios proyectos, sigue primero [la configuración de proyectos y gestiones](proyectos_y_gestiones.md), incluida la comprobación de Graph antes de completar `MS_CONFIG_ITEM_ID`:
+Crea un archivo `.env` en la raíz del proyecto tomando [.env.example](../.env.example) como base. El ejemplo siguiente selecciona DeepSeek con pago por consumo; para Groq consulta [su guía](modelos_groq.md). Para varios proyectos, sigue primero [la configuración de proyectos](proyectos.md), incluida la comprobación de Graph antes de completar `MS_CONFIG_ITEM_ID`:
 
 Para obtener y comprobar los valores `MS_*`, sigue [Microsoft Graph paso a paso](microsoft_graph_paso_a_paso.md). La guía distingue las credenciales de Entra, los IDs de sitio/biblioteca/archivo y los permisos reales de las operaciones Excel. No basta con que la consulta funcione en Graph Explorer.
 
@@ -105,15 +105,15 @@ Antes de probar registros, configura la tabla de usuarios siguiendo [Control de 
 
 Ahora puedes enviar fotos o mensajes a tu bot desde Telegram y el servidor local procesará las solicitudes en tiempo real.
 
-Para generar el PDF sin insertar registros en Excel, elige **5) Generar PDF sin registrar en Excel** en el resumen. El bot consulta Excel (solo lectura) para numerar el comprobante; el PDF no lleva marca de prueba. Puedes editar los datos o terminar con `/cancelar`. Las opciones 1 y 2 sí guardan en la tabla configurada, incluso cuando el servidor corre localmente.
+Al terminar de revisar el resumen, **1) Confirmar y subir a Excel** guarda el movimiento en la tabla configurada (también cuando el servidor corre localmente) y envía el PDF de respaldo; con proyectos, además archiva la foto original en SharePoint. **2) Editar la información** permite corregir datos, y `/cancelar` aborta. Usa archivos y carpetas de prueba mientras pruebas.
 
 ### Modelos de IA configurables
 
 `GROQ_MODELO_VISION` y `GROQ_MODELO_TEXTO` se aplican solo con Groq y conservan los nombres históricos del código si se omiten; comprueba que sigan disponibles antes de usarlos. Se pueden cambiar sin editar código; al guardar, reinicia o despliega el servicio para aplicar la configuración. Si el nuevo modelo de visión no admite `reasoning_effort`, configura `GROQ_VISION_EXTRA_PARAMS={}`. Consulta [la guía de modelos de Groq](modelos_groq.md) para las opciones específicas.
 
-## Proyectos y gestiones
+## Proyectos
 
-[Configurar proyectos y gestiones](proyectos_y_gestiones.md) explica las cuatro tablas del catálogo, un archivo por proyecto y una hoja por gestión, el campo manual `gestion_actual`, los IDs de Graph, el diagnóstico de solo lectura y el despliegue gradual. No actives `MS_CONFIG_ITEM_ID` con un catálogo incompleto. [DeepSeek](deepseek.md) explica sus variables, saldo y pruebas sin registrar.
+[Configurar proyectos](proyectos.md) explica las tres tablas del catálogo, un archivo por proyecto con una fila por proyecto y gestión (hoja y tabla incluidas), los IDs de Graph, el diagnóstico de solo lectura y el despliegue gradual. No actives `MS_CONFIG_ITEM_ID` con un catálogo incompleto. [DeepSeek](deepseek.md) explica sus variables, saldo y pruebas sin registrar.
 
 ## Reenvíos de Telegram
 
