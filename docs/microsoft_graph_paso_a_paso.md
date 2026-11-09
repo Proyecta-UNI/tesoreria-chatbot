@@ -349,10 +349,10 @@ Antes de darlo por listo:
 - [ ] Se distingue lo probado con el usuario de lo probado con la aplicación.
 - [ ] Se revisó la limitación de permisos Excel antes de afirmar que el bot puede operar el libro.
 - [ ] Las variables están guardadas y la versión de código correcta está desplegada.
-- [ ] `/mi_id`, acceso autorizado y PDF sin registro se comprueban desde Telegram después del despliegue.
+- [ ] `/mi_id`, acceso autorizado, registro con PDF y archivado de la evidencia se comprueban desde Telegram después del despliegue.
 
-Las confirmaciones de navegación e ID compartidas en la sesión no sustituyen una prueba de producción. Las 42 pruebas locales del repositorio simulan integraciones: no verifican permisos de Microsoft Graph.
+Las confirmaciones de navegación e ID compartidas en la sesión no sustituyen una prueba de producción. Las pruebas locales del repositorio simulan integraciones: no verifican permisos de Microsoft Graph.
 
-## 11. Varios proyectos y hojas por gestión
+## 11. Varios proyectos y hojas de movimientos
 
-Para la nueva rama, sigue [proyectos y gestiones](proyectos_y_gestiones.md). `MS_CONFIG_ITEM_ID` identifica el Excel central, descargado mediante `/drives/{drive_id}/items/{item_id}/content`; esa descarga sí documenta permisos de aplicación. Las tablas de movimientos siguen usando operaciones workbook, por lo que la limitación del apartado 8 sigue siendo pertinente. El campo `gestion_actual` se define manualmente en PROYECTOS (por ejemplo, 2026), sin cálculo por fechas. El diagnóstico de la nueva rama comprueba el catálogo y cada hoja/tabla actual sin insertar filas.
+Para la nueva rama, sigue [configurar proyectos](proyectos.md). `MS_CONFIG_ITEM_ID` identifica el Excel central, descargado mediante `/drives/{drive_id}/items/{item_id}/content`; esa descarga sí documenta permisos de aplicación. Las tablas de movimientos siguen usando operaciones workbook, por lo que la limitación del apartado 8 sigue siendo pertinente. Cada fila de PROYECTOS lleva la gestión en su nombre (por ejemplo, `Proyecto X 26-1`) y se abre o cierra con `activo`, sin cálculo por fechas. El diagnóstico de la nueva rama comprueba el catálogo y la hoja/tabla de cada proyecto activo sin insertar filas. Cada operación registrada también sube la foto original con una carga de archivo (`PUT /drives/{drive_id}/root:/Finanzas/Evidencias/<proyecto>/<archivo>:/content`, o una sesión de carga si pesa más de 4 MB): la aplicación necesita permiso de escritura sobre esa biblioteca, y esta carga de archivos —a diferencia de las operaciones de tablas— sí admite permisos de aplicación.

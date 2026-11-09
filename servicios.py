@@ -2,9 +2,11 @@ import os
 import json
 import re
 import base64
+import hashlib
 import math
 import time
 import requests
+from urllib.parse import quote
 from openai import OpenAI
 from datetime import date, datetime, timezone, timedelta
 import msal
@@ -26,6 +28,93 @@ llm_client = OpenAI(
     timeout=30.0,
     **({"max_retries": 0} if IA_PROVEEDOR == "deepseek" else {}),
 )
+
+# --- DICTADO POR VOZ (opcional) ---
+# DeepSeek no transcribe audio, así que la voz usa Whisper en Groq con GROQ_API_KEY, también cuando
+# IA_PROVEEDOR=deepseek. Sin esa clave, el bot funciona igual pero sin notas de voz.
+def _entero_positivo_desde_entorno(nombre, predeterminado):
+    valor = (os.getenv(nombre) or "").strip()
+    if not valor:
+        return predeterminado
+    try:
+        numero = int(valor)
+    except ValueError as e:
+        raise ValueError(f"{nombre} debe ser un número entero positivo.") from e
+    if numero <= 0:
+        raise ValueError(f"{nombre} debe ser un número entero positivo.")
+    return numero
+
+
+def _voz_activada_desde_entorno(entorno=None):
+    """La voz se activa sola si hay clave; VOZ_ACTIVADA=No la apaga aunque exista."""
+    entorno = os.environ if entorno is None else entorno
+    return (entorno.get("VOZ_ACTIVADA") or "").strip().lower() not in ("no", "false", "0", "off")
+
+
+VOZ_MODELO_PREDETERMINADO = "whisper-large-v3-turbo"
+VOZ_URL_GROQ = "https://api.groq.com/openai/v1"
+
+
+def _configuracion_voz(entorno=None):
+    """Proveedor de transcripción: Groq por defecto, o cualquier servicio compatible con la API de
+    OpenAI (/audio/transcriptions) mediante VOZ_BASE_URL + VOZ_API_KEY + VOZ_MODELO.
+    Devuelve None si la voz está apagada o sin clave. La clave de Groq nunca se envía a otro servidor."""
+    entorno = os.environ if entorno is None else entorno
+    if not _voz_activada_desde_entorno(entorno):
+        return None
+    leer = lambda nombre: (entorno.get(nombre) or "").strip()
+    base = leer("VOZ_BASE_URL").rstrip("/")
+    if not base:
+        clave = leer("VOZ_API_KEY") or leer("GROQ_API_KEY")
+        if not clave:
+            return None
+        return {"base_url": VOZ_URL_GROQ, "api_key": clave,
+                "modelo": leer("VOZ_MODELO") or leer("GROQ_MODELO_VOZ") or VOZ_MODELO_PREDETERMINADO}
+    if not base.startswith("https://"):
+        raise ValueError("VOZ_BASE_URL debe empezar con https://")
+    if not leer("VOZ_API_KEY") or not leer("VOZ_MODELO"):
+        raise ValueError("Con VOZ_BASE_URL debes definir también VOZ_API_KEY y VOZ_MODELO.")
+    return {"base_url": base, "api_key": leer("VOZ_API_KEY"), "modelo": leer("VOZ_MODELO")}
+
+
+_config_voz = _configuracion_voz()
+VOZ_MODELO = _config_voz["modelo"] if _config_voz else VOZ_MODELO_PREDETERMINADO
+VOZ_MAX_SEGUNDOS = _entero_positivo_desde_entorno("VOZ_MAX_SEGUNDOS", 60)
+VOZ_MAX_BYTES = 5 * 1024 * 1024
+voz_client = (OpenAI(api_key=_config_voz["api_key"], base_url=_config_voz["base_url"], timeout=30.0, max_retries=0)
+              if _config_voz else None)
+VOZ_DISPONIBLE = voz_client is not None
+
+
+class ErrorVozNoDisponible(Exception):
+    """No hay GROQ_API_KEY: el dictado por voz está desactivado."""
+
+
+def transcribir_audio(audio_bytes: bytes, nombre: str = "nota.ogg") -> str:
+    """Transcribe una nota de voz a texto en español. El audio no se guarda en ningún lado."""
+    if voz_client is None:
+        raise ErrorVozNoDisponible("Falta GROQ_API_KEY para el dictado por voz.")
+    respuesta = voz_client.audio.transcriptions.create(
+        model=VOZ_MODELO, file=(nombre, audio_bytes), language="es",
+        response_format="text", temperature=0,
+    )
+    texto = respuesta if isinstance(respuesta, str) else getattr(respuesta, "text", "")
+    return re.sub(r"\s+", " ", str(texto or "")).strip()
+
+
+def mensaje_error_voz(excepcion: Exception) -> str:
+    """Mensaje para la persona cuando falla la transcripción (sin detalles técnicos)."""
+    error_str = str(excepcion).lower()
+    if "model_not_found" in error_str or "decommissioned" in error_str or "does not exist" in error_str:
+        return "🎤 El modelo que uso para escuchar audios ya no está disponible. Avísale al área de TIC para que lo actualicen y, mientras tanto, escríbeme el mensaje."
+    if "rate_limit" in error_str or "429" in error_str:
+        return "🎤🐌 Estoy recibiendo demasiados audios y me puse en pausa. Inténtalo en un rato o escríbeme el mensaje."
+    if "authentication" in error_str or "401" in error_str or "invalid_api_key" in error_str:
+        return "🎤🔑 Mi llave para escuchar audios no funciona. Avísale al área de TIC y, mientras tanto, escríbeme el mensaje."
+    if "timeout" in error_str or "timed out" in error_str:
+        return "🎤⏱️ El servicio de audio tardó demasiado. ¿Lo intentamos de nuevo o prefieres escribirlo?"
+    return "🎤 No pude entender la nota de voz. Inténtalo de nuevo o escríbeme el mensaje."
+
 
 # --- CONFIGURACIÓN DE MODELOS LLM ---
 # Los nombres se pueden cambiar desde Render o .env; los valores actuales
@@ -105,6 +194,10 @@ MS_ITEM_ID = os.getenv("MS_ITEM_ID")
 MS_USUARIOS_ITEM_ID = os.getenv("MS_USUARIOS_ITEM_ID")
 MS_TABLE_NAME = os.getenv("MS_TABLE_NAME", "TablaFinanzas")
 MS_CONFIG_ITEM_ID = (os.getenv("MS_CONFIG_ITEM_ID") or "").strip()
+# Copia de la foto original de cada operación registrada: <ruta>/<Nombre del proyecto>/<archivo>.
+# Por defecto va en la misma biblioteca del Excel del proyecto; MS_EVIDENCIAS_DRIVE_ID la cambia.
+MS_EVIDENCIAS_RUTA = (os.getenv("MS_EVIDENCIAS_RUTA") or "Finanzas/Evidencias").strip().strip("/")
+MS_EVIDENCIAS_DRIVE_ID = (os.getenv("MS_EVIDENCIAS_DRIVE_ID") or "").strip()
 _cache_catalogo = {"valor": None, "vence": 0.0}
 
 # Lista de acceso en un archivo distinto, dentro de la misma biblioteca.
@@ -236,7 +329,7 @@ def obtener_destinos_usuario(usuario_id):
 
 
 def validar_destino_actual(usuario_id, destino):
-    # No reutiliza permisos/gestiones vencidos ni redirige una operación ya iniciada.
+    # No reutiliza permisos vencidos ni redirige una operación ya iniciada.
     return obtener_catalogo(forzar=True).validar_destino(usuario_id, destino)
 
 
@@ -277,7 +370,7 @@ def verificar_tabla_destino(destino):
     respuesta = requests.get(destino.url_tabla() + "/worksheet", headers=headers, timeout=15)
     respuesta.raise_for_status()
     if respuesta.json().get("name") != destino.hoja:
-        raise ErrorCatalogo("La tabla no pertenece a la hoja configurada para esta gestión.")
+        raise ErrorCatalogo("La tabla no pertenece a la hoja configurada para este proyecto.")
     respuesta = requests.get(destino.url_tabla() + "/headerRowRange", headers=headers, timeout=15)
     respuesta.raise_for_status()
     valores = respuesta.json().get("values", [])
@@ -425,7 +518,7 @@ def _identificar_error_llm(excepcion: Exception) -> str:
 def extraer_datos_recibo_llm(image_bytes: bytes, contexto_usuario: str) -> dict:
     """Extrae datos del comprobante en dos pasos: OCR multimodal + interpretación con modelo de texto."""
     contexto_seguro = (
-        contexto_usuario.replace("{", "(").replace("}", ")").replace("```", "").replace("<", "").replace(">", "").strip()[:200]
+        contexto_usuario.replace("{", "(").replace("}", ")").replace("```", "").replace("<", "").replace(">", "").strip()[:400]
         if contexto_usuario else "N/A"
     )
 
@@ -469,7 +562,7 @@ Devuelve exclusivamente un JSON válido con esta estructura:
 {{
     "fecha": "DD/MM/YYYY o 'No disponible'",
     "concepto": "Descripción breve basada únicamente en la información encontrada",
-    "tipo": "Compra, DeudaXCobrar, Deuda Cobrada, Transferencia, Donación u otro si está claro. Si no: 'No determinado'",
+    "tipo": "Compra (por defecto) o Servicio si el gasto es claramente un servicio",
     "ing_eg": "Ingreso, Egreso o 'No determinado'",
     "motivo": "Motivo encontrado o deducido en el comprobante o contexto. Si no existe: 'No disponible'",
     "acreedor": "Razón social completa si aparece en el comprobante. Si solo hay nombre comercial, usar ese. Si no existe: 'No aplica'",
@@ -586,40 +679,6 @@ def calcular_codigo_y_nro(fecha_str: str, formato_usa: bool = False, destino=Non
     
     return codigo, nro_operacion_dia
 
-def preparar_datos_pdf(datos: dict, saldo_previo, formato_usa: bool = False, destino=None) -> dict:
-    """Datos del comprobante para exportar solo PDF: lee Excel (código, número de operación del día
-    y saldo) exactamente como el guardado real, pero no escribe nada ni modifica `datos`."""
-    monto_float, clasificacion = validar_operacion(datos)
-    if MS_CONFIG_ITEM_ID and destino is None:
-        raise ErrorCatalogo("No hay un proyecto de destino seleccionado.")
-    datos = datos.copy()
-    usar_usa = formato_usa or FORMATO_FECHA_EXCEL == "US"
-    if destino is not None:
-        try:
-            fecha = datetime.strptime(datos["fecha"], "%m/%d/%Y" if formato_usa else "%d/%m/%Y")
-        except (ValueError, TypeError, KeyError) as e:
-            raise ErrorValidacionOperacion("La fecha no es válida para el formato seleccionado.") from e
-        usar_usa = destino.formato_fecha == "US"
-        datos["fecha"] = fecha.strftime("%m/%d/%Y" if usar_usa else "%d/%m/%Y")
-        datos.update(proyecto=destino.nombre, gestion=destino.gestion)
-    try:
-        codigo, nro_operacion_dia = calcular_codigo_y_nro(datos["fecha"], usar_usa, destino=destino, estricto=True)
-    except ErrorConsultaSaldo:
-        raise
-    except Exception as e:
-        raise ErrorConsultaSaldo("No se pudo calcular la numeración.") from e
-
-    ingreso_val = monto_float if clasificacion == "ingreso" else 0
-    egreso_val = monto_float if clasificacion == "egreso" else 0
-    if saldo_previo is None:
-        # El PDF nunca sale con un saldo inventado ni con un marcador de posición.
-        raise ErrorConsultaSaldo("No hay saldo previo para calcular el saldo del comprobante.")
-    saldo = f"{saldo_previo + ingreso_val - egreso_val:.2f}"
-    datos.update(codigo=codigo, nro_operacion_dia=str(nro_operacion_dia),
-                 ingreso_final=ingreso_val, egreso_final=egreso_val, saldo=saldo)
-    return datos
-
-
 def guardar_en_excel(datos: dict, saldo_previo: float, formato_usa: bool = False, destino=None) -> dict:
     """Guarda directamente en el Excel de SharePoint usando Graph API."""
     monto_float, clasificacion = validar_operacion(datos)
@@ -640,7 +699,7 @@ def guardar_en_excel(datos: dict, saldo_previo: float, formato_usa: bool = False
         usar_usa = destino.formato_fecha == "US"
         datos["fecha"] = fecha.strftime("%m/%d/%Y" if usar_usa else "%d/%m/%Y")
         codigo, nro_operacion_dia = calcular_codigo_y_nro(datos["fecha"], usar_usa, destino=destino)
-        datos.update(proyecto=destino.nombre, gestion=destino.gestion)
+        datos.update(proyecto=destino.nombre)
     else:
         codigo, nro_operacion_dia = calcular_codigo_y_nro(datos["fecha"], usar_usa)
     
@@ -695,3 +754,87 @@ def guardar_en_excel(datos: dict, saldo_previo: float, formato_usa: bool = False
     response.raise_for_status() 
     
     return datos
+
+
+# --- EVIDENCIAS: respaldo inmutable de la foto original en SharePoint ---
+LIMITE_SUBIDA_SIMPLE = 4 * 1024 * 1024    # por encima se usa una sesión de carga de Graph
+LIMITE_EVIDENCIA = 50 * 1024 * 1024       # un solo fragmento; Telegram entrega como máximo 20 MB
+INTENTOS_EVIDENCIA = 3
+ESPERA_EVIDENCIA = (1, 3)                 # segundos antes del 2.º y 3.er intento
+_NO_PERMITIDOS_SHAREPOINT = re.compile(r'[\\/:*?"<>|#%\x00-\x1f]')
+
+
+class ErrorEvidencia(Exception):
+    """No se pudo archivar la foto original; la operación ya estaba guardada en Excel."""
+
+
+def segmento_sharepoint(texto, predeterminado="Sin nombre"):
+    """Nombre seguro para una carpeta o archivo de SharePoint (sin separadores ni caracteres vedados)."""
+    limpio = re.sub(r"\s+", " ", _NO_PERMITIDOS_SHAREPOINT.sub(" ", str(texto))).strip(" .")
+    return limpio[:100].strip(" .") or predeterminado
+
+
+def _extension_imagen(imagen: bytes) -> str:
+    if imagen[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if imagen[:4] == b"RIFF" and imagen[8:12] == b"WEBP":
+        return ".webp"
+    return ".jpg"
+
+
+def ruta_evidencia(destino, codigo, imagen: bytes, momento=None) -> tuple:
+    """(carpeta, nombre): Finanzas/Evidencias/<Nombre del proyecto>/<código>_<fecha-hora>_<huella>.<ext>.
+    La huella de la imagen hace que el nombre sea único y que repetir el envío no pise el original."""
+    momento = momento or datetime.now(ZONA_HORARIA_PERU)
+    partes = [segmento_sharepoint(p) for p in MS_EVIDENCIAS_RUTA.split("/") if p]
+    carpeta = "/".join(partes + [segmento_sharepoint(destino.nombre)])
+    huella = hashlib.sha256(imagen).hexdigest()[:8]
+    nombre = f"{segmento_sharepoint(codigo, 'operacion')}_{momento:%Y%m%d-%H%M%S}_{huella}{_extension_imagen(imagen)}"
+    return carpeta, nombre
+
+
+def _subir_evidencia(base, token, imagen):
+    cabecera = {"Authorization": f"Bearer {token}"}
+    if len(imagen) <= LIMITE_SUBIDA_SIMPLE:
+        return requests.put(f"{base}/content?@microsoft.graph.conflictBehavior=fail",
+                            headers={**cabecera, "Content-Type": "application/octet-stream"}, data=imagen, timeout=60)
+    sesion = requests.post(f"{base}/createUploadSession", headers={**cabecera, "Content-Type": "application/json"},
+                           json={"item": {"@microsoft.graph.conflictBehavior": "fail"}}, timeout=30)
+    if sesion.status_code >= 300:
+        return sesion
+    total = len(imagen)
+    return requests.put(sesion.json()["uploadUrl"],
+                        headers={"Content-Length": str(total), "Content-Range": f"bytes 0-{total - 1}/{total}"},
+                        data=imagen, timeout=120)
+
+
+def guardar_evidencia(destino, imagen: bytes, codigo: str, momento=None) -> str:
+    """Sube la foto original a SharePoint sin sobrescribir nunca un archivo existente.
+    Devuelve la ruta (carpeta/archivo) guardada; lanza ErrorEvidencia si no se pudo."""
+    if destino is None:
+        raise ErrorEvidencia("No hay un proyecto de destino para archivar la evidencia.")
+    if not imagen:
+        raise ErrorEvidencia("No hay imagen para archivar.")
+    if len(imagen) > LIMITE_EVIDENCIA:
+        raise ErrorEvidencia("La imagen es demasiado grande para archivarla.")
+    token = obtener_token_ms()
+    if not token:
+        raise ErrorEvidencia("Falla de autenticación con SharePoint.")
+    carpeta, nombre = ruta_evidencia(destino, codigo, imagen, momento)
+    ruta = f"{carpeta}/{nombre}"
+    drive = MS_EVIDENCIAS_DRIVE_ID or destino.drive_id
+    base = f"https://graph.microsoft.com/v1.0/drives/{quote(drive, safe='')}/root:/{quote(ruta, safe='/')}:"
+    estado = None
+    for intento in range(INTENTOS_EVIDENCIA):
+        try:
+            estado = _subir_evidencia(base, token, imagen).status_code
+        except Exception as e:  # red, tiempo de espera o respuesta inesperada de Graph
+            estado = None
+            print(ocultar_secretos(f"Evidencia {codigo}: fallo al subir ({type(e).__name__})."), flush=True)
+        if estado in (200, 201, 409):  # 409: ya existe ese mismo archivo; no se pisa
+            return ruta
+        if estado is not None and estado != 429 and estado < 500:
+            break  # un error 4xx (permiso, ruta) no se arregla reintentando
+        if intento + 1 < INTENTOS_EVIDENCIA:
+            time.sleep(ESPERA_EVIDENCIA[min(intento, len(ESPERA_EVIDENCIA) - 1)])
+    raise ErrorEvidencia(f"SharePoint no aceptó la evidencia (estado {estado}).")

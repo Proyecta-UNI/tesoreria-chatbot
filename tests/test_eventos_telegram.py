@@ -71,12 +71,12 @@ class WebhookEventos(unittest.TestCase):
         self.saldo.assert_called_once()
         self.mensajes.assert_called_once()
 
-    def test_uno_de_lectura_reenviado_no_se_convierte_en_confirmacion(self):
-        main.user_states["1"] = dict(step="esperar_lectura", file_id="foto", contexto_texto="Materiales")
+    def test_historia_reenviada_no_se_procesa_dos_veces_ni_se_convierte_en_confirmacion(self):
+        main.user_states["1"] = dict(step="elegir_metodo", file_id="foto", caption="", contexto_manual={})
         self.ia.return_value = datos_validos()
         with patch.object(main.requests, "get", side_effect=[Mock(json=lambda: {"ok": True, "result": {"file_path": "foto.jpg"}}), Mock(content=b"imagen")]):
-            self.enviar("1", update_id=20)
-            self.enviar("1", update_id=20)
+            self.enviar("Compré materiales en la tienda, pagó Ana", update_id=20)
+            self.enviar("Compré materiales en la tienda, pagó Ana", update_id=20)
         self.ia.assert_called_once()
         self.assertEqual(main.user_states["1"]["step"], "confirmar")
         self.saldo.assert_not_called()
@@ -100,13 +100,12 @@ class WebhookEventos(unittest.TestCase):
         self.guardar.assert_called_once()
         self.assertEqual(main.user_states["1"]["file_id"], "otra-foto")
 
-    def test_pdf_reenviado_no_genera_segundo_documento(self):
-        datos_pdf = {**datos_validos(), "codigo": "O16102601"}
-        with patch.object(main, "enviar_comprobante_pdf") as pdf, patch.object(main, "preparar_datos_pdf", return_value=datos_pdf):
-            self.enviar("5", update_id=40)
-            self.enviar("5", update_id=40)
-        pdf.assert_called_once()
-        self.guardar.assert_not_called()
+    def test_confirmacion_reenviada_no_guarda_ni_archiva_dos_veces(self):
+        with patch.object(main, "finalizar_registro") as finalizar:
+            self.enviar("1", update_id=40)
+            self.enviar("1", update_id=40)
+        self.guardar.assert_called_once()
+        finalizar.assert_called_once()
 
     def test_cancelacion_reenviada_no_borra_sesion_nueva(self):
         self.enviar("/cancelar", update_id=50)

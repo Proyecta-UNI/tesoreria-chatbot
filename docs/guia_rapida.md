@@ -3,9 +3,10 @@
 Para llegar a un bot funcionando en pruebas con varios proyectos, sin tocar los archivos
 reales. Cada paso enlaza la guía larga si necesitas el detalle.
 
-**Vocabulario:** la *gestión* es el año (`2026`); una *ejecución* es un semestre (`26-1`,
-`26-2`). Cada ejecución con su propio archivo Excel es **una fila de PROYECTOS**
-([por qué](proyectos_y_gestiones.md#proyectos-con-varias-ejecuciones-semestres)).
+**Vocabulario:** cada fila de PROYECTOS es **un proyecto con su propio archivo Excel**
+(`Software Week P1MP 26 1`), con su hoja y tabla
+([detalle](proyectos.md#gestiones-y-ejecuciones-una-fila-por-cada-una)). No hay una tabla de
+destinos aparte, y un archivo nunca se comparte entre filas.
 
 ## 0. Qué necesitas antes de empezar
 
@@ -46,6 +47,9 @@ MS_CLIENT_SECRET=...
 MS_DRIVE_ID=<biblioteca donde irá el catálogo>
 ```
 
+**Opcional, dictado por voz:** agrega `GROQ_API_KEY=...` (también si usas DeepSeek). Sin ella el bot
+funciona igual, sin notas de voz ([guía](voz.md)).
+
 ## 3. Preparar los Excel contables de prueba (uno por ejecución)
 
 1. En una carpeta de pruebas de SharePoint, sube una copia de
@@ -78,15 +82,14 @@ Copia `ejemplos/excel/Accesos_ejemplo.xlsx` como `Accesos.xlsx` y súbelo a una
 | Hoja / tabla | Qué poner |
 |---|---|
 | Personas / `USUARIOS_AUTORIZADOS` | Tu Telegram ID (como **Texto**), tu nombre y `Sí`. |
-| Proyectos / `PROYECTOS` | Una fila por ejecución: `p1mp_26_1`, `P1MP · 26-1`, `2026`, `Sí`. Opcional: añade una columna `fecha_inicio` (texto AAAA-MM-DD, solo informativa). |
-| Destinos / `DESTINOS_PROYECTO` | Una fila por ejecución con su `drive_id`, `item_id`, hoja, tabla y `PE`. `ruta_archivo` es referencia. |
-| Permisos / `ACCESOS_PROYECTO` | Una fila por persona y ejecución, `Sí`. |
+| Proyectos / `PROYECTOS` | Una fila por proyecto y gestión: `p1mp_26_1`, el nombre con su gestión (`Software Week P1MP 26 1`), su `drive_id`, `item_id`, hoja, tabla, `PE` y `Sí`. `ruta_archivo` es referencia. |
+| Permisos / `ACCESOS_PROYECTO` | Una fila por persona y `proyecto_id`, `Sí`. |
 
 Reglas que bloquean todo el catálogo si se rompen: reemplaza **todos** los
-`REEMPLAZAR_*`; cada `proyecto_id` con `activo = Sí` necesita un destino para su
-`gestion_actual`; cada ID de Permisos debe existir en Personas; nada de fórmulas ni celdas
-combinadas. Si agregas filas, **extiende la tabla** de Excel. Deja en `No` las ejecuciones
-que aún no empiezan.
+`REEMPLAZAR_*`; un `proyecto_id` no puede repetirse; **dos filas no pueden apuntar al mismo
+archivo**; cada ID de Permisos debe existir en Personas y en Proyectos;
+nada de fórmulas ni celdas combinadas. Si agregas filas, **extiende la tabla** de Excel. Deja
+en `No` las gestiones que aún no empiezan.
 
 ## 6. Validar el catálogo sin red
 
@@ -133,15 +136,19 @@ catálogo, agrégalo (Personas y Permisos) y espera hasta 2 minutos.
 
 ## 10. Probar (solo con archivos de prueba)
 
-1. Envía una foto: el bot lista **solo tus proyectos**.
-2. Elige la opción 5 (PDF) primero y confirma que **ningún Excel recibió filas**.
-3. Registra una operación (1 o 2): una sola fila nueva, en el archivo, hoja y tabla
-   correctos, con CODIGO y SALDO bien calculados.
-4. Repite en otra ejecución: los saldos son independientes.
+1. Envía una foto: el bot lista **solo tus proyectos**. Luego cuéntale el gasto en una frase
+   (o usa la leyenda de la foto): debe procesarlo solo, sin pedirte escribir `1`.
+2. Comprueba el encabezado del resumen («📍 Proyecto: …», con la gestión dentro del nombre) y confirma con **1**: una
+   sola fila nueva, en el archivo, hoja y tabla correctos, con CODIGO y SALDO bien calculados; te
+   llega el PDF; y la foto original aparece en `Finanzas/Evidencias/<Nombre del proyecto>`.
+3. Prueba **2** (editar), corrige un dato y confirma. Si elegiste mal el proyecto, `/cancelar`.
+4. Repite en otra gestión: los saldos son independientes.
 5. **Fórmulas:** edita el concepto a `=1+1` y regístralo en un archivo de prueba. La
    celda debe mostrar el texto `=1+1`, no `2`. Si aparece un apóstrofo visible delante,
    es inocuo, pero cuéntalo para ajustarlo.
-6. Prueba con una persona sin permiso y con una deshabilitada: no deben poder registrar.
+6. Si activaste la voz, envía una foto y cuenta el gasto con una nota de voz: el bot debe mostrar
+   `🎤 Entendí: «…»` y seguir al resumen. Prueba también un audio de más de 60 segundos (se rechaza).
+7. Prueba con una persona sin permiso y con una deshabilitada: no deben poder registrar.
 
 ## 11. Problemas frecuentes
 
@@ -160,5 +167,4 @@ catálogo, agrégalo (Personas y Permisos) y espera hasta 2 minutos.
 Mantén el catálogo de pruebas y crea uno **nuevo** para producción: cambiar entre ambos es
 solo cambiar `MS_CONFIG_ITEM_ID`. Para cada ejecución real: prepara su archivo (con su
 saldo inicial real), obtén sus IDs con el script, registra su fila en PROYECTOS y
-DESTINOS, y da acceso en PERMISOS. Al empezar una ejecución, ponla en `Sí`; al terminar,
-en `No`. Mantén un solo proceso/worker.
+da acceso en PERMISOS. Al empezar una gestión, ponla en `Sí`; al terminar, en `No`. Mantén un solo proceso/worker.

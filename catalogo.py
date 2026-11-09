@@ -1,4 +1,4 @@
-"""Configuración de proyectos sin inferencias de IA ni selección por calendario."""
+"""Configuración de proyectos: una fila por proyecto, cada una con su propio archivo Excel."""
 from dataclasses import dataclass
 from io import BytesIO
 import math
@@ -78,7 +78,6 @@ def registros(tablas, nombre, campos):
 class Destino:
     proyecto_id: str
     nombre: str
-    gestion: str
     drive_id: str
     item_id: str
     hoja: str
@@ -99,68 +98,54 @@ class Catalogo:
             uid = telegram_id(fila["telegram_id"])
             self.usuarios[uid] = self.usuarios.get(uid, True) and activo(fila["activo"])
 
-        self.proyectos = {}
-        for fila in registros(tablas, "PROYECTOS", ("proyecto_id", "nombre", "gestion_actual", "activo")):
-            pid = identificador(fila["proyecto_id"])
-            if pid in self.proyectos:
-                raise ErrorCatalogo(f"Proyecto duplicado: {pid}.")
-            self.proyectos[pid] = (texto(fila["nombre"]), texto(fila["gestion_actual"]), activo(fila["activo"]))
-            if not self.proyectos[pid][0] or not self.proyectos[pid][1]:
-                raise ErrorCatalogo(f"Falta nombre o gestion_actual en {pid}.")
-
+        # Una fila = un proyecto con SU PROPIO archivo Excel (y la hoja y tabla de sus
+        # movimientos dentro de él). El nombre ya identifica el periodo (p. ej. «P1MP 26 1»).
+        # Para cerrarlo: activo = No; deja de ofrecerse en el bot y su histórico queda en el Excel general.
         self.destinos = {}
-        ocupados = set()
-        hojas_ocupadas = set()
-        for fila in registros(tablas, "DESTINOS_PROYECTO", ("proyecto_id", "gestion", "drive_id", "item_id", "hoja", "tabla", "formato_fecha")):
+        self._activos = {}
+        archivos = set()
+        campos = ("proyecto_id", "nombre", "drive_id", "item_id", "hoja", "tabla", "formato_fecha", "activo")
+        for fila in registros(tablas, "PROYECTOS", campos):
             pid = identificador(fila["proyecto_id"])
-            gestion = texto(fila["gestion"])
-            if pid not in self.proyectos or not gestion or (pid, gestion) in self.destinos:
-                raise ErrorCatalogo("Destino duplicado, gestión vacía o proyecto inexistente.")
+            if pid in self.destinos:
+                raise ErrorCatalogo(f"Proyecto duplicado: {pid}.")
+            nombre = texto(fila["nombre"])
+            if not nombre:
+                raise ErrorCatalogo(f"Falta el nombre en {pid}.")
             drive, item, tabla = (identificador(fila[c]) for c in ("drive_id", "item_id", "tabla"))
             hoja, formato = texto(fila["hoja"]), texto(fila["formato_fecha"]).upper()
             if not hoja or formato not in ("PE", "US"):
-                raise ErrorCatalogo("Cada destino necesita hoja y formato_fecha PE o US.")
-            clave = (drive, item, tabla.casefold())
-            clave_hoja = (drive, item, hoja.casefold())
-            if clave in ocupados or clave_hoja in hojas_ocupadas or (drive, item) == archivo_config:
-                raise ErrorCatalogo("Cada gestión necesita su propia hoja y tabla; no uses el catálogo como destino contable.")
-            ocupados.add(clave)
-            hojas_ocupadas.add(clave_hoja)
-            self.destinos[pid, gestion] = Destino(pid, self.proyectos[pid][0], gestion, drive, item, hoja, tabla, formato)
-        # Evitar que dos proyectos compartan accidentalmente el mismo archivo.
-        archivos = {}
-        archivos_por_proyecto = {}
-        for destino in self.destinos.values():
-            clave = destino.drive_id, destino.item_id
-            if clave in archivos and archivos[clave] != destino.proyecto_id:
-                raise ErrorCatalogo("Cada proyecto debe tener su propio archivo Excel.")
-            anterior = archivos_por_proyecto.get(destino.proyecto_id)
-            if anterior is not None and anterior != clave:
-                raise ErrorCatalogo("Las gestiones de un proyecto deben ser hojas del mismo archivo Excel.")
-            archivos[clave] = destino.proyecto_id
-            archivos_por_proyecto[destino.proyecto_id] = clave
-        for pid, (_, gestion, habilitado) in self.proyectos.items():
-            if habilitado and (pid, gestion) not in self.destinos:
-                raise ErrorCatalogo(f"No existe destino para la gestión actual de {pid}.")
+                raise ErrorCatalogo("Cada proyecto necesita hoja y formato_fecha PE o US.")
+            if (drive, item) == archivo_config:
+                raise ErrorCatalogo("No uses el archivo del catálogo como destino contable.")
+            if (drive, item) in archivos:
+                raise ErrorCatalogo("Cada proyecto necesita su propio archivo Excel; no compartas un archivo entre filas.")
+            archivos.add((drive, item))
+            self.destinos[pid] = Destino(pid, nombre, drive, item, hoja, tabla, formato)
+            self._activos[pid] = activo(fila["activo"])
 
         self.permisos = {}
         for fila in registros(tablas, "ACCESOS_PROYECTO", ("telegram_id", "proyecto_id", "activo")):
             uid, pid = telegram_id(fila["telegram_id"]), identificador(fila["proyecto_id"])
-            if uid not in self.usuarios or pid not in self.proyectos:
+            if uid not in self.usuarios or pid not in self.destinos:
                 raise ErrorCatalogo("Un permiso apunta a una persona o proyecto inexistente.")
             clave = uid, pid
             self.permisos[clave] = self.permisos.get(clave, True) and activo(fila["activo"])
+
+    def destinos_activos(self):
+        """Proyectos con activo = Sí, ordenados por proyecto_id."""
+        return sorted((d for pid, d in self.destinos.items() if self._activos[pid]),
+                      key=lambda destino: destino.proyecto_id)
 
     def destinos_usuario(self, uid):
         uid = telegram_id(uid)
         if not self.usuarios.get(uid, False):
             return []
-        return sorted((self.destinos[pid, gestion]
-                       for pid, (_, gestion, habilitado) in self.proyectos.items()
-                       if habilitado and self.permisos.get((uid, pid), False)),
+        return sorted((destino for pid, destino in self.destinos.items()
+                       if self._activos[pid] and self.permisos.get((uid, pid), False)),
                       key=lambda destino: destino.proyecto_id)
 
     def validar_destino(self, uid, elegido):
         if elegido not in self.destinos_usuario(uid):
-            raise ErrorCatalogo("El proyecto, gestión, destino o permiso cambió. Inicia una operación nueva.")
+            raise ErrorCatalogo("El proyecto o tu permiso cambió. Inicia una operación nueva.")
         return elegido

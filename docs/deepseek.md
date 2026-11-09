@@ -47,11 +47,9 @@ Consulta las tarifas actuales antes de recargar, pues pueden cambiar.
    `Authorization: Bearer <clave>` en la cabecera, nunca en la URL.
 2. Confirma que el modelo de visión admite imágenes y que hay saldo disponible.
 3. Envía un comprobante conocido. Comprueba fecha, monto, clasificación y nombres.
-4. Usa primero **5) Generar PDF sin registrar en Excel**. Revisa foto y datos.
-   También puedes iniciar con `/solo_pdf` antes de la foto; ese recorrido oculta
-   el guardado hasta que uses la opción 7 del resumen. Igual consulta Excel (solo
-   lectura) para numerar el PDF.
-5. Prueba una escritura en un archivo de pruebas, verifica la fila y sus fórmulas.
+4. Revisa foto y datos en el resumen antes de confirmar; ya no hay un PDF sin registro.
+5. Confirma con 1 solo contra un archivo (y una carpeta de evidencias) de pruebas; verifica la fila,
+   sus fórmulas y la foto archivada.
 6. Revisa consumo y tiempo reales. Las pruebas locales simulan la API; no certifican
    disponibilidad, precisión ni costo de un modelo remoto.
 
@@ -66,4 +64,6 @@ Los valores históricos del código pueden estar retirados: no los tomes como ca
 - [Desactivar thinking mediante extra_body](https://api-docs.deepseek.com/guides/thinking_mode/).
 - [Listado de modelos y capacidades](https://api-docs.deepseek.com/api/list-models/).
 
-Para conectar varios proyectos, sigue [proyectos y gestiones](proyectos_y_gestiones.md). Elegir proveedor de IA y activar el catálogo son configuraciones independientes.
+El [dictado por voz](voz.md) no usa DeepSeek: necesita `GROQ_API_KEY` (Whisper en Groq) incluso con `IA_PROVEEDOR=deepseek`, y es opcional.
+
+Para conectar varios proyectos, sigue [configurar proyectos](proyectos.md). Elegir proveedor de IA y activar el catálogo son configuraciones independientes.

@@ -8,41 +8,46 @@ que ya utiliza la organización. Haz copias antes de adaptarlos.
 
 | Archivo | Para qué sirve |
 |---|---|
-| [Accesos_ejemplo.xlsx](Accesos_ejemplo.xlsx) | Administrar personas, proyectos, gestión actual, destinos y permisos. |
-| [Proyecto_X_ejemplo.xlsx](Proyecto_X_ejemplo.xlsx) | Mostrar las 13 columnas y las fórmulas de un proyecto, con hojas 2025 y 2026. |
+| [Accesos_ejemplo.xlsx](Accesos_ejemplo.xlsx) | Administrar personas, proyectos (archivo, hoja y tabla; la gestión va en el nombre) y permisos. |
+| [Proyecto_X_ejemplo.xlsx](Proyecto_X_ejemplo.xlsx) | Mostrar las 13 columnas y las fórmulas de un proyecto (un archivo por proyecto o gestión, con su hoja 2026). |
 
 ## 1. Adaptar el Excel de accesos y configuración
 
-Contiene cuatro tablas reales de Excel, con encabezados en la fila 6:
+Contiene tres tablas reales de Excel, con encabezados en la fila 6:
 
 | Hoja | Nombre de la tabla | Campos |
 |---|---|---|
 | Personas | USUARIOS_AUTORIZADOS | telegram_id, nombre, activo |
-| Proyectos | PROYECTOS | proyecto_id, nombre, gestion_actual, activo |
-| Destinos | DESTINOS_PROYECTO | proyecto_id, gestion, drive_id, item_id, hoja, tabla, formato_fecha, ruta_archivo, url_archivo |
+| Proyectos | PROYECTOS | proyecto_id, nombre, drive_id, item_id, hoja, tabla, formato_fecha, activo, ruta_archivo, url_archivo |
 | Permisos | ACCESOS_PROYECTO | telegram_id, proyecto_id, activo |
 
-Los encabezados y nombres de tabla deben conservarse. Los nombres de estas cuatro
+Los encabezados y nombres de tabla deben conservarse. Los nombres de estas tres
 hojas son informativos; los del archivo contable sí deben coincidir con el catálogo.
-Los desplegables `Sí/No` ayudan a editar `activo`. Todas las personas, proyectos y
-permisos del ejemplo están en **No** para no habilitar accesos por copiar el archivo.
+Los desplegables `Sí/No` y `PE/US` ayudan a editar `activo` y `formato_fecha`. Todas las
+personas, proyectos y permisos del ejemplo están en **No** para no habilitar accesos por
+copiar el archivo.
+
+**Una fila de `Proyectos` es un proyecto con su gestión incluida en el nombre**
+(`Proyecto X 26-1`) y con el archivo, la hoja y la tabla donde se registra. No hay hoja de
+«destinos» ni campo de gestión actual.
 
 1. Sustituye los Telegram ID ficticios por los que devuelve `/mi_id`. Mantén esa
    columna como **Texto**. Borra personas y permisos que no vayas a utilizar.
 2. Sustituye los proyectos X e Y por los proyectos reales. `proyecto_id` es un
-   identificador estable, como `robotica`; repítelo igual en Destinos y Permisos.
-3. Define tú `gestion_actual`, por ejemplo `2026`. No cambia automáticamente por
-   fechas. Cada proyecto puede tener una gestión actual diferente.
-4. En Destinos, reemplaza **todos** los valores `REEMPLAZAR_DRIVE_*` y
-   `REEMPLAZAR_ITEM_*` por los IDs reales de cada archivo obtenidos con Graph.
-   Las hojas `2025` y `2026` del proyecto X coinciden con el archivo contable incluido.
-   El proyecto Y solo ilustra otro destino; prepara su propio archivo si lo usarás,
-   o elimina Y de las tres tablas correspondientes.
-5. Escribe las rutas y enlaces reales de cada Excel. Pueden estar en carpetas y
+   identificador estable y único, como `robotica_26_1`; repítelo igual en Permisos.
+   `nombre` es el proyecto con la nomenclatura exacta de su gestión (`Proyecto X P1MP 26 1`; también
+   es el de su carpeta de evidencias). No existe una columna aparte de gestión.
+3. Reemplaza **todos** los valores `REEMPLAZAR_DRIVE_*` y `REEMPLAZAR_ITEM_*` por los IDs
+   reales de cada archivo obtenidos con Graph (`item_id` es el identificador del archivo).
+   La fila del proyecto X coincide con el archivo contable incluido (hoja y tabla `2026` / `MOV_X_2026`);
+   el proyecto Y solo ilustra otro archivo: prepara el tuyo si lo usarás, o elimina esa fila y sus permisos.
+4. Escribe las rutas y enlaces reales de cada Excel. Pueden estar en carpetas y
    bibliotecas diferentes. `ruta_archivo` y `url_archivo` son referencias para ti:
    el bot usa `drive_id` e `item_id`, no resuelve esas rutas automáticamente.
-6. Cada proyecto debe tener un único archivo, con una hoja y tabla diferentes por
-   gestión. Una combinación proyecto/gestión debe tener una sola fila de destino.
+5. **Cada fila necesita su propio archivo Excel**: no puede haber dos filas con el mismo
+   `drive_id` e `item_id`. El archivo puede tener otras hojas (resúmenes, notas): el bot solo
+   escribe en la `hoja` y `tabla` de la fila.
+6. Cada gestión nueva es un archivo nuevo y una fila nueva (con permisos nuevos); para cerrar una, `activo = No`.
 7. Habilita con `Sí` únicamente las personas, proyectos y permisos que correspondan,
    después de revisar los IDs y comprobar la integración.
 
@@ -51,14 +56,13 @@ agregues. El enlace de ejemplo `tu-organizacion.sharepoint.com` debe reemplazars
 
 ## 2. Adaptar el Excel de movimientos de un proyecto
 
-Tiene dos hojas de ejemplo:
+Es el archivo propio de **una** gestión del proyecto X: una hoja de ejemplo.
 
-| Hoja / gestión | Tabla de movimientos | Formato de fecha del catálogo |
-|---|---|---|
-| 2025 | MOV_X_2025 | PE |
-| 2026 | MOV_X_2026 | PE |
+| Hoja | Tabla de movimientos | Fila del catálogo | Formato de fecha |
+|---|---|---|---|
+| 2026 | MOV_X_2026 | Proyecto X · P1MP 26 1 (`proyecto_x_26_1`) | PE |
 
-En ambas, la tabla está en `A6:M10`; las filas 7 a 9 son movimientos ficticios y
+La tabla está en `A6:M10`; las filas 7 a 9 son movimientos ficticios y
 la fila 10 está disponible para probar otra operación. Las columnas son estas,
 **sin insertar otras entre ellas ni cambiar su orden**:
 
@@ -76,9 +80,9 @@ la fila 10 está disponible para probar otra operación. Las columnas son estas,
 | J | ESTADO | Pagado, Pendiente u otro estado. |
 | K | INGRESO | Importe recibido en soles. |
 | L | EGRESO | Importe entregado en soles. |
-| M | SALDO | Fórmula de saldo acumulado de esta gestión. |
+| M | SALDO | Fórmula de saldo acumulado de esta hoja. |
 
-El archivo y la hoja identifican proyecto y gestión. No se agregan esos campos
+El archivo y la hoja identifican el proyecto y su gestión. No se agregan esos campos
 a las 13 columnas contables. Los datos editables se muestran en azul; A y M tienen
 fórmulas, con fondo gris. El saldo inicial está en **B3**, fuera de la tabla.
 
@@ -89,13 +93,13 @@ fórmulas, con fondo gris. El saldo inicial está en **B3**, fuera de la tabla.
 - **SALDO:** saldo inicial de B3 + ingresos acumulados − egresos acumulados hasta
   la fila actual. No toma el saldo de otra hoja o proyecto.
 - **B3 = 1000** es un saldo ficticio para ilustrar el cálculo. Con los ejemplos,
-  los saldos son 974.50, 1074.50 y 1034.50 soles en ambas hojas.
+  los saldos son 974.50, 1074.50 y 1034.50 soles.
 
 Cuando prepares el archivo para datos reales:
 
 1. En cada hoja, borra el **contenido de B7:L10**. No borres la tabla, los encabezados,
    las fórmulas de A7:A10 o M7:M10, ni filas enteras.
-2. Pon el saldo inicial real de esa gestión en **B3**. Si el bot pide saldo inicial,
+2. Pon el saldo inicial real de esa hoja en **B3**. Si el bot pide saldo inicial,
    respóndele con **ese mismo importe**. El bot no actualiza B3: si le das otro
    valor, el saldo del PDF y el de Excel podrían diferir. Cero es un saldo válido.
 3. Abre y guarda el archivo en Excel para recalcularlo.
@@ -119,8 +123,9 @@ la fórmula que interpreta fechas de texto y prueba ambas representaciones.
 
 Para otro proyecto, copia el archivo, cambia el título y da nombres propios a las
 tablas, por ejemplo `MOV_Y_2026`. Actualiza sus IDs, hoja y tabla en el catálogo.
-Para una nueva gestión, duplica la hoja, cambia su nombre y el de su tabla, limpia
-los datos ficticios, define B3 y agrega el destino antes de cambiar `gestion_actual`.
+Para una nueva gestión, copia el archivo (un archivo nuevo por gestión), cambia el nombre de su
+tabla, limpia los datos ficticios, define B3 y agrega su fila en `Proyectos` (con permisos) antes de
+ponerla en `Sí`; luego cierra la anterior con `No`.
 
 ## 3. Subir a SharePoint y conectar
 
@@ -130,9 +135,9 @@ los datos ficticios, define B3 y agrega el destino antes de cambiar `gestion_act
 3. Obtén los IDs mediante [Microsoft Graph paso a paso](../../docs/microsoft_graph_paso_a_paso.md).
    Para cada archivo consulta su propia ruta, incluyendo todas sus carpetas.
 4. Completa el catálogo y configúralo en Render con `MS_CONFIG_ITEM_ID`.
-   `MS_DRIVE_ID` identifica la biblioteca del catálogo; cada destino lleva su
+   `MS_DRIVE_ID` identifica la biblioteca del catálogo; cada proyecto lleva su
    propio `drive_id`. No reemplaces el ID del archivo contable por el del catálogo.
-5. Sigue [proyectos y gestiones](../../docs/proyectos_y_gestiones.md), incluidos
+5. Sigue [configurar proyectos](../../docs/proyectos.md), incluidos
    los permisos y la limitación de autenticación de las operaciones workbook.
 
 Desde la raíz del repositorio, puedes comprobar el ejemplo sin red ni claves:
@@ -151,11 +156,12 @@ python herramientas/verificar_configuracion.py
 
 Ese diagnóstico solo consulta. No verifica la escritura ni la propagación de
 fórmulas. Completa una prueba con movimientos ficticios antes de habilitar datos
-reales. También puedes generar primero un PDF con `/solo_pdf`, sin escribir Excel.
+reales. Cada operación confirmada también sube la foto original a
+`Finanzas/Evidencias/<Nombre del proyecto>`: pruébalo con una carpeta de pruebas.
 
 ## Verificación realizada sobre estos ejemplos
 
-Se revisaron las seis hojas renderizadas, las tablas y los valores calculados.
+Se revisaron las cuatro hojas renderizadas, las tablas y los valores calculados.
 Se comprobaron el catálogo con todos los accesos desactivados, los 13 encabezados,
 los códigos y saldos, y cambios de importe en el motor de cálculo del generador.
 Las fórmulas del archivo exportado tienen sus resultados de ejemplo guardados.

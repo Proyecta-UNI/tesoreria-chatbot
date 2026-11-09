@@ -29,6 +29,10 @@ Eso omite los parámetros adicionales. Para volver al comportamiento actual, eli
 
 También existe `GROQ_TEXTO_EXTRA_PARAMS`, por defecto `{}`, para opciones adicionales compatibles con el modelo de texto. Las dos variables deben contener objetos JSON; la aplicación rechaza JSON inválido, listas y parámetros base que entrarían en conflicto con la llamada (`model`, `messages`, `max_completion_tokens`, `temperature` o `response_format`).
 
+## Dictado por voz
+
+El [dictado por voz](voz.md) usa el mismo `GROQ_API_KEY` con un modelo de audio aparte (`GROQ_MODELO_VOZ`, por defecto `whisper-large-v3-turbo`). No cambia los modelos de visión y texto de esta guía.
+
 ## Qué se conserva
 
 * El cliente sigue usando Groq con la misma `GROQ_API_KEY` y el timeout de 30 segundos.

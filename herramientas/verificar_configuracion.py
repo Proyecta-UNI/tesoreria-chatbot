@@ -20,11 +20,10 @@ def ejecutar():
             load_dotenv(Path(__file__).resolve().parents[1] / ".env")
             import servicios
             catalogo = servicios.obtener_catalogo(forzar=True)
-        activos = [(pid, gestion) for pid, (_, gestion, habilitado) in catalogo.proyectos.items() if habilitado]
+        activos = catalogo.destinos_activos()
         print(f"Catálogo válido. Proyectos activos: {len(activos)}. Usuarios activos: {sum(catalogo.usuarios.values())}.")
-        for pid, gestion in activos:
-            destino = catalogo.destinos[pid, gestion]
-            print(f"Proyecto {pid}: gestión {gestion}, hoja {destino.hoja}, tabla {destino.tabla}.")
+        for destino in activos:
+            print(f"Proyecto {destino.proyecto_id} ({destino.nombre}): hoja {destino.hoja}, tabla {destino.tabla}.")
             if not args.archivo:
                 servicios.verificar_tabla_destino(destino)
                 saldo = servicios.obtener_saldo_actual(destino)

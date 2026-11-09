@@ -15,12 +15,8 @@ def generar_comprobante_pdf(datos: dict, ruta_salida: str, ruta_imagen: str = No
     with open(ruta_plantilla, "r", encoding="utf-8") as archivo:
         html_texto = archivo.read()
 
-    proyecto_gestion = (
-        f"<p><strong>Proyecto:</strong> {escape(str(datos['proyecto']))}<br>"
-        f"<strong>Gestión:</strong> {escape(str(datos['gestion']))}</p>"
-        if datos.get("proyecto") and datos.get("gestion") else ""
-    )
-    html_texto = html_texto.replace("{{proyecto_gestion}}", proyecto_gestion)
+    proyecto = f"<p><strong>Proyecto:</strong> {escape(str(datos['proyecto']))}</p>" if datos.get("proyecto") else ""
+    html_texto = html_texto.replace("{{proyecto}}", proyecto)
 
     # Campos requeridos a inyectar
     campos_requeridos = [
