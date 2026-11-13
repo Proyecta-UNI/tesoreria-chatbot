@@ -1,4 +1,4 @@
-# Chatbot de tesorería
+# Chatbot de
 
 <p align="center">
   <img src="docs/toribio_telegram.png" width="250" alt="Imagen de perfil del chatbot de Telegram">
